@@ -1,3 +1,33 @@
+server:
+  port: 0
+
 spring:
   application:
     name: auth
+
+eureka:
+  instance:
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 10
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+
+keycloak:
+  url: "http://localhost:8081"
+  realm: "relay-realm"
+  client-id: "relay-client"
+  client-secret: "D0t5nQjQJAfrj7uSkChM6MkYpo1Mm2FA"
+
+kafka:
+  bootstrap-servers: localhost:9092
+
+logging:
+  level:
+    com.relay: DEBUG
+    root: INFO
+    org.keycloak: DEBUG
+    org.jboss.resteasy: DEBUG
+    org.apache.http: DEBUG
+    org.apache.http.wire: TRACE
+    web: debug
