@@ -17,6 +17,7 @@ java {
 
 repositories {
     mavenCentral()
+    mavenLocal()
 }
 
 extra["springCloudVersion"] = "2025.1.2"
@@ -40,6 +41,8 @@ dependencies {
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     implementation("io.jsonwebtoken:jjwt-impl:0.12.6")
     implementation("io.jsonwebtoken:jjwt-jackson:0.12.6")
+
+    implementation("com.relay:common:1.0")
 }
 
 dependencyManagement {
