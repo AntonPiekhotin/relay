@@ -1,4 +1,4 @@
-package com.relay.exception
+package com.relay.common.exception
 
 class RelayException(
     val statusCode: Int,

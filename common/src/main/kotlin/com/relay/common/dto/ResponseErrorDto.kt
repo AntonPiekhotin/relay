@@ -1,4 +1,4 @@
-package com.relay.dto
+package com.relay.common.dto
 
 import com.fasterxml.jackson.annotation.JsonFormat
 import java.time.LocalDateTime

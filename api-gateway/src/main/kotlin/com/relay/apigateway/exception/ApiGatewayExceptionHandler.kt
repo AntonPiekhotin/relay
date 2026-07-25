@@ -1,7 +1,7 @@
 package com.relay.apigateway.exception
 
-import com.relay.dto.ResponseErrorDto
-import com.relay.exception.RelayException
+import com.relay.common.dto.ResponseErrorDto
+import com.relay.common.exception.RelayException
 import io.jsonwebtoken.ExpiredJwtException
 import io.jsonwebtoken.MalformedJwtException
 import java.util.Arrays
