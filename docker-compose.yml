@@ -14,7 +14,7 @@ services:
     ports:
       - "5433:5432"
     networks:
-      - wallet-network
+      - relay-network
 
   keycloak:
     container_name: keycloak
@@ -35,7 +35,7 @@ services:
       keycloak-postgres:
         condition: service_healthy
     networks:
-      - wallet-network
+      - relay-network
 
   kafka:
     image: confluentinc/cp-kafka:7.7.7
@@ -87,11 +87,84 @@ services:
     ports:
       - "5434:5432"
     networks:
-      - wallet-network
+      - relay-network
+
+  notification-db:
+    image: postgres:15
+    container_name: notification-db
+    environment:
+      POSTGRES_DB: notification
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d user" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5435:5432"
+    networks:
+      - relay-network
+
+  call-db:
+    image: postgres:15
+    container_name: call-db
+    environment:
+      POSTGRES_DB: call
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d user" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5436:5432"
+    networks:
+      - relay-network
+
+  message-db:
+    image: postgres:15
+    container_name: message-db
+    environment:
+      POSTGRES_DB: message
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d user" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5437:5432"
+    networks:
+      - relay-network
+
+  session-registry:
+    image: redis:7.4-alpine
+    container_name: session-registry
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy volatile-lru
+      --appendonly no
+      --save ""
+    volumes:
+      - session-registry-data:/data
+    networks:
+      - messenger-net
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   kafka_data:
 
 networks:
-  wallet-network:
+  relay-network:
     driver: bridge
