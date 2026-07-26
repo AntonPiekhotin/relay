@@ -17,14 +17,36 @@ java {
 
 repositories {
     mavenCentral()
+    mavenLocal()
 }
 
+extra["springCloudVersion"] = "2025.1.2"
+
 dependencies {
-    implementation("org.springframework.boot:spring-boot-starter")
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("org.springframework.cloud:spring-cloud-starter-netflix-eureka-client")
+    // spring-boot-kafka, not just org.springframework.kafka:spring-kafka. Boot 4 splits
+    // auto-configuration into per-technology modules, and the plain library brings none of it:
+    // without this there is no KafkaTemplate, no consumer factory, and @KafkaListener methods
+    // are never registered.
+    implementation("org.springframework.boot:spring-boot-kafka")
+    implementation("tools.jackson.module:jackson-module-kotlin")
+    implementation("com.relay:common:1.0")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.boot:spring-boot-starter-webflux-test")
+    testImplementation("org.springframework.kafka:spring-kafka-test")
+    testImplementation("io.projectreactor:reactor-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+dependencyManagement {
+    imports {
+        mavenBom("org.springframework.cloud:spring-cloud-dependencies:${property("springCloudVersion")}")
+    }
 }
 
 kotlin {

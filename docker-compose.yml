@@ -155,7 +155,7 @@ services:
     volumes:
       - session-registry-data:/data
     networks:
-      - messenger-net
+      - relay-network
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
@@ -164,6 +164,7 @@ services:
 
 volumes:
   kafka_data:
+  session-registry-data:
 
 networks:
   relay-network:

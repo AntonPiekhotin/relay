@@ -1,3 +1,44 @@
+server:
+  port: 8083
+
 spring:
   application:
     name: websocket-gateway
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8081/realms/relay-realm
+          jwk-set-uri: http://localhost:8081/realms/relay-realm/protocol/openid-connect/certs
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      # Per-instance group, not a shared one. Any user's session may live on any instance, so
+      # every instance must see every event. A shared group would split partitions across
+      # instances and silently drop events at whichever one does not hold the target session.
+      group-id: websocket-gateway-${random.uuid}
+      # A live push channel must not replay history on restart; clients catch up over REST.
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+relay:
+  websocket:
+    path: /ws
+    outbound-buffer-size: 256
+    client-id: relay-client
+
+# Registers so the gateway can resolve lb://message later. Clients connect to port 8083
+# directly; api-gateway has no route here and its discovery locator is off.
+eureka:
+  instance:
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 10
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+
+logging:
+  level:
+    com.relay: DEBUG
+    root: INFO

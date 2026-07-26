@@ -17,7 +17,7 @@ spring:
     gateway:
       discovery:
         locator:
-          enabled: true
+          enabled: false
 
 eureka:
   client:
