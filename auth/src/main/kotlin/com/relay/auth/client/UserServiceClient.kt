@@ -1,8 +1,8 @@
 package com.relay.auth.client
 
 import com.relay.auth.config.USER_SERVICE_WEB_CLIENT
-import com.relay.auth.dto.CreateUserRequest
 import com.relay.auth.util.UserServiceProperties
+import com.relay.common.dto.CreateUserRequest
 import com.relay.common.exception.RelayException
 import java.util.concurrent.TimeoutException
 import org.slf4j.LoggerFactory

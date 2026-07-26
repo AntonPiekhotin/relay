@@ -1,4 +1,4 @@
-package com.relay.userservice
+package com.relay.user
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication

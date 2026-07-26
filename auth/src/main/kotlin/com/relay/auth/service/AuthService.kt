@@ -1,10 +1,10 @@
 package com.relay.auth.service
 
 import com.relay.auth.client.UserServiceClient
-import com.relay.auth.dto.CreateUserRequest
 import com.relay.auth.dto.LoginRequest
 import com.relay.auth.dto.RefreshRequest
 import com.relay.auth.dto.RegisterRequest
+import com.relay.common.dto.CreateUserRequest
 import com.relay.common.exception.RelayException
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -40,9 +40,16 @@ class AuthService(
         Mono.fromCallable { keycloakService.registerUser(request) }
             .subscribeOn(Schedulers.boundedElastic())
             .flatMap { userId ->
-                userServiceClient.createUser(CreateUserRequest.of(userId, request))
+                userServiceClient.createUser(request.toCreateUserRequest(userId))
                     .onErrorResume { ex -> rollbackRegistration(userId, ex) }
             }
+
+    private fun RegisterRequest.toCreateUserRequest(userId: String) = CreateUserRequest(
+        id = userId,
+        email = email,
+        firstName = firstName,
+        lastName = lastName
+    )
 
     private fun rollbackRegistration(userId: String, cause: Throwable): Mono<Void> {
         logger.error("Failed to save user $userId in user service, rolling back Keycloak user", cause)

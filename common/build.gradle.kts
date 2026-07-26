@@ -16,6 +16,7 @@ kotlin {
 
 dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.18.3")
+    implementation("jakarta.validation:jakarta.validation-api:3.1.1")
 }
 
 publishing {
