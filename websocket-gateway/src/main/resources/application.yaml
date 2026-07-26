@@ -28,6 +28,11 @@ relay:
     outbound-buffer-size: 256
     client-id: relay-client
 
+message-service:
+  base-url: "lb://message"
+  messages-path: "/internal/api/v1/messages"
+  request-timeout: 5s
+
 # Registers so the gateway can resolve lb://message later. Clients connect to port 8083
 # directly; api-gateway has no route here and its discovery locator is off.
 eureka:

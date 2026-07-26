@@ -9,7 +9,10 @@ enum class ErrorCode {
     BAD_FRAME,
 
     /** Frame was understood but the gateway could not act on it. */
-    INTERNAL
+    INTERNAL,
+
+    /** The send could not be stored. The client should retry the same clientMessageId over REST. */
+    SEND_FAILED
 }
 
 /** Gateway to client. */
@@ -17,6 +20,7 @@ enum class ErrorCode {
 @JsonSubTypes(
     JsonSubTypes.Type(value = OutboundFrame.Connected::class, name = "CONNECTED"),
     JsonSubTypes.Type(value = OutboundFrame.Pong::class, name = "PONG"),
+    JsonSubTypes.Type(value = OutboundFrame.MessageAck::class, name = "MESSAGE_ACK"),
     JsonSubTypes.Type(value = OutboundFrame.MessageNew::class, name = "MESSAGE_NEW"),
     JsonSubTypes.Type(value = OutboundFrame.Notification::class, name = "NOTIFICATION"),
     JsonSubTypes.Type(value = OutboundFrame.CallSignal::class, name = "CALL_SIGNAL"),
@@ -28,6 +32,17 @@ sealed interface OutboundFrame {
     data class Connected(val userId: String, val sessionId: String) : OutboundFrame
 
     data class Pong(val nonce: String? = null) : OutboundFrame
+
+    /**
+     * Confirms a MESSAGE_SEND was stored. The client keys off [clientMessageId] to mark its
+     * pending send as delivered; not receiving this is its cue to retry over REST.
+     */
+    data class MessageAck(
+        val clientMessageId: String,
+        val id: String,
+        val chatId: String,
+        val sentAt: Instant
+    ) : OutboundFrame
 
     data class MessageNew(
         val id: String,
