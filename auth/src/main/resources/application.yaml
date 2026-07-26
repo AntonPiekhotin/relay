@@ -19,6 +19,11 @@ keycloak:
   client-id: "relay-client"
   client-secret: "D0t5nQjQJAfrj7uSkChM6MkYpo1Mm2FA"
 
+user-service:
+  base-url: "lb://user"
+  users-path: "/internal/api/v1/users"
+  request-timeout: 5s
+
 kafka:
   bootstrap-servers: localhost:9092
 

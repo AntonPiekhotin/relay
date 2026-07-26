@@ -1,6 +1,7 @@
 package com.relay.auth.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.relay.auth.config.KEYCLOAK_WEB_CLIENT
 import com.relay.auth.dto.LoginRequest
 import com.relay.auth.dto.RegisterRequest
 import com.relay.auth.dto.TokenResponse
@@ -13,6 +14,7 @@ import org.keycloak.admin.client.CreatedResponseUtil
 import org.keycloak.admin.client.Keycloak
 import org.keycloak.representations.idm.UserRepresentation
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
@@ -35,14 +37,15 @@ class KeycloakService(
     private val keycloak: Keycloak,
     private val props: KeycloakProperties,
     private val mapper: ObjectMapper,
-    private val webClient: WebClient
+    @Qualifier(KEYCLOAK_WEB_CLIENT) private val webClient: WebClient
 ) {
 
     private val logger = LoggerFactory.getLogger(javaClass)
     private val tokenUrl = "${props.url}/realms/${props.realm}/protocol/openid-connect/token"
     private val logoutUrl = "${props.url}/realms/${props.realm}/protocol/openid-connect/logout"
 
-    fun registerUser(request: RegisterRequest) = with(request) {
+    /** Creates the user and assigns its client role, returning the new Keycloak user id. */
+    fun registerUser(request: RegisterRequest): String = with(request) {
         val user = UserRepresentation().apply {
             username = request.email
             firstName = request.firstName
@@ -61,6 +64,7 @@ class KeycloakService(
         } catch (ex: Exception) {
             rollbackUserCreation(userId, ex)
         }
+        userId
     }
 
     private fun rollbackUserCreation(userId: String, cause: Exception): Nothing {
