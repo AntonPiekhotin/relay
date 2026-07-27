@@ -20,6 +20,8 @@ repositories {
     mavenLocal()
 }
 
+extra["springCloudVersion"] = "2025.1.2"
+
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.boot:spring-boot-starter-security")
@@ -36,12 +38,17 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    implementation("org.keycloak:keycloak-admin-client:24.0.5")
-    implementation("org.springframework.cloud:spring-cloud-starter-netflix-eureka-client:5.0.0")
+    implementation("org.springframework.cloud:spring-cloud-starter-netflix-eureka-client")
 
     implementation("org.springframework.kafka:spring-kafka")
 
     implementation("com.relay:common:1.0")
+}
+
+dependencyManagement {
+    imports {
+        mavenBom("org.springframework.cloud:spring-cloud-dependencies:${property("springCloudVersion")}")
+    }
 }
 
 kotlin {
