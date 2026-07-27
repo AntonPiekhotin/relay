@@ -1,0 +1,920 @@
+{
+  "info": {
+    "_postman_id": "b7c1e2a4-5f3d-4a91-9c88-relay000001",
+    "name": "Relay",
+    "description": "End-to-end collection for the Relay messenger.\n\n## Before you run\n\nStart infrastructure and services:\n\n```\ndocker compose up -d                     # keycloak, kafka, postgres x4, redis\n(cd eureka && ./gradlew bootRun)         # :8761\n(cd api-gateway && ./gradlew bootRun)    # :8080\n(cd auth && ./gradlew bootRun)           # random port, reached via the gateway\n(cd user && ./gradlew bootRun --args='--server.port=8085')\n(cd message && ./gradlew bootRun --args='--server.port=8084')\n(cd websocket-gateway && ./gradlew bootRun)  # :8083\n```\n\n`user` and `message` ship with `server.port: 0`, so they get a random port and are\nnormally reached only through Eureka. This collection calls their `/internal` endpoints\ndirectly, which needs a fixed port — hence the `--server.port` overrides above. Change the\n`userServiceUrl` / `messageServiceUrl` variables if you prefer different ones.\n\nKeycloak must have the `relay-realm` realm, a `relay-client` client with the secret in\n`auth/src/main/resources/application.yaml`, and a client role named `USER`.\n\n## How to run\n\nUse **Run collection** — the folders are ordered and later requests depend on variables\ncaptured by earlier ones (tokens, user ids, chat ids). Running requests one by one works\ntoo, as long as you go top to bottom.\n\n## WebSocket\n\nPostman collections cannot carry WebSocket requests, so the socket is not in here. Two ways\nto drive it:\n\n**1. Postman native WebSocket request** — New > WebSocket, URL `ws://localhost:8083/ws`.\nUnder the *Protocols* field add two entries: `access_token` and then your access token\nvalue. Connect, then send:\n\n```json\n{\"type\":\"PING\",\"nonce\":\"n-1\"}\n{\"type\":\"MESSAGE_SEND\",\"clientMessageId\":\"c-1\",\"chatId\":\"<chatId>\",\"body\":\"hello\"}\n```\n\n**2. Browser console** on any page:\n\n```js\nconst jwt = '<paste accessTokenA>';\nconst ws = new WebSocket('ws://localhost:8083/ws', ['access_token', jwt]);\nws.onmessage = e => console.log(e.data);\nws.onopen = () => ws.send(JSON.stringify({type:'PING', nonce:'n-1'}));\n// then:\n// ws.send(JSON.stringify({type:'MESSAGE_SEND', clientMessageId:crypto.randomUUID(), chatId:'<chatId>', body:'hi'}))\n```\n\nThe token goes in the subprotocol list rather than the URL, so it stays out of access logs\nand browser history. Expect `CONNECTED` first, then `MESSAGE_ACK` for a send, then\n`MESSAGE_NEW` pushed via Kafka (senders are among the recipients, so their own other\ndevices see the message too).\n\nTo watch delivery between two users, open a second socket as user B and send as user A.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "gatewayUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "userServiceUrl", "value": "http://localhost:8085", "type": "string" },
+    { "key": "messageServiceUrl", "value": "http://localhost:8084", "type": "string" },
+    { "key": "wsGatewayUrl", "value": "http://localhost:8083", "type": "string" },
+    { "key": "eurekaUrl", "value": "http://localhost:8761", "type": "string" },
+    { "key": "keycloakUrl", "value": "http://localhost:8081", "type": "string" },
+    { "key": "password", "value": "Relay!2345", "type": "string" },
+    { "key": "emailA", "value": "", "type": "string" },
+    { "key": "emailB", "value": "", "type": "string" },
+    { "key": "accessTokenA", "value": "", "type": "string" },
+    { "key": "refreshTokenA", "value": "", "type": "string" },
+    { "key": "accessTokenB", "value": "", "type": "string" },
+    { "key": "userIdA", "value": "", "type": "string" },
+    { "key": "userIdB", "value": "", "type": "string" },
+    { "key": "chatId", "value": "", "type": "string" },
+    { "key": "secondChatId", "value": "", "type": "string" },
+    { "key": "clientMessageId", "value": "", "type": "string" },
+    { "key": "messageId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0. Health",
+      "description": "Confirms the pieces this collection depends on are actually up.",
+      "item": [
+        {
+          "name": "Eureka - registered services",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('eureka is up', () => pm.response.to.have.status(200));",
+                  "",
+                  "const apps = pm.response.json().applications.application || [];",
+                  "const names = (Array.isArray(apps) ? apps : [apps]).map(a => a.name);",
+                  "console.log('registered:', names.join(', '));",
+                  "",
+                  "// message must be discoverable, or the gateway cannot resolve lb://message",
+                  "pm.test('message is registered', () => pm.expect(names).to.include('MESSAGE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": { "raw": "{{eurekaUrl}}/eureka/apps", "host": ["{{eurekaUrl}}"], "path": ["eureka", "apps"] },
+            "description": "Lists what has registered with Eureka. If MESSAGE is missing, the websocket gateway will fail every send with SEND_FAILED."
+          }
+        },
+        {
+          "name": "Keycloak - realm discovery",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('relay-realm exists', () => pm.response.to.have.status(200));",
+                  "pm.test('issuer matches what the services expect', () =>",
+                  "  pm.expect(pm.response.json().issuer).to.eql('http://localhost:8081/realms/relay-realm'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{keycloakUrl}}/realms/relay-realm/.well-known/openid-configuration",
+              "host": ["{{keycloakUrl}}"],
+              "path": ["realms", "relay-realm", ".well-known", "openid-configuration"]
+            },
+            "description": "The websocket gateway and api-gateway both validate tokens against this realm's JWKS."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Auth (through api-gateway)",
+      "description": "`/api/v1/auth/**` is the only path the api-gateway lets through unauthenticated.\n\nRegister does two things: it creates the Keycloak identity and then saves the profile in user-service. If the profile save fails, the Keycloak user is deleted again, so registration never leaves an identity without a profile.",
+      "item": [
+        {
+          "name": "Register user A",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fresh address every run, so the collection can be re-run without 409s.",
+                  "pm.collectionVariables.set('emailA', `alice+${Date.now()}@relay.test`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test('returns tokens - register logs you straight in', () =>",
+                  "  pm.expect(json.access_token).to.be.a('string'));",
+                  "",
+                  "pm.collectionVariables.set('accessTokenA', json.access_token);",
+                  "pm.collectionVariables.set('refreshTokenA', json.refresh_token);",
+                  "",
+                  "// The Keycloak user id is the token's `sub`. Everything downstream keys on it:",
+                  "// it is the user-service profile id, the chat participant id and the senderId.",
+                  "const claims = JSON.parse(Buffer.from(json.access_token.split('.')[1], 'base64').toString('utf8'));",
+                  "pm.collectionVariables.set('userIdA', claims.sub);",
+                  "console.log('userIdA =', claims.sub);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{emailA}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Anderson\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/register",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "Password rules (8-256 chars, upper, lower, digit, special) are declared on RegisterRequest but the controller has no @Valid, so they are not currently enforced by auth — Keycloak's own policy decides. `Relay!2345` satisfies both."
+          }
+        },
+        {
+          "name": "Login user A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('accessTokenA', json.access_token);",
+                  "pm.collectionVariables.set('refreshTokenA', json.refresh_token);",
+                  "",
+                  "pm.test('token is a bearer token', () => pm.expect(json.token_type.toLowerCase()).to.eql('bearer'));",
+                  "",
+                  "const claims = JSON.parse(Buffer.from(json.access_token.split('.')[1], 'base64').toString('utf8'));",
+                  "pm.collectionVariables.set('userIdA', claims.sub);",
+                  "pm.test('sub matches the registered user', () =>",
+                  "  pm.expect(claims.sub).to.be.a('string').and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{emailA}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/login",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Register user B",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.collectionVariables.set('emailB', `bob+${Date.now()}@relay.test`);"]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('accessTokenB', json.access_token);",
+                  "",
+                  "const claims = JSON.parse(Buffer.from(json.access_token.split('.')[1], 'base64').toString('utf8'));",
+                  "pm.collectionVariables.set('userIdB', claims.sub);",
+                  "console.log('userIdB =', claims.sub);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{emailB}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"Bob\",\n  \"lastName\": \"Brown\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/register",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "A second user, so you have a real counterpart for chats and for watching delivery over two sockets."
+          }
+        },
+        {
+          "name": "Register duplicate email (expect failure)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('rejected, not silently duplicated', () =>",
+                  "  pm.expect(pm.response.code).to.be.oneOf([400, 409, 500]));",
+                  "console.log('status', pm.response.code, pm.response.text().slice(0, 200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{emailA}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Duplicate\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/register",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "Keycloak refuses the duplicate username before user-service is ever called, so no orphan profile is created. The exact status comes from Keycloak's error mapping."
+          }
+        },
+        {
+          "name": "Refresh user A token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('accessTokenA', json.access_token);",
+                  "pm.collectionVariables.set('refreshTokenA', json.refresh_token);",
+                  "pm.test('new access token issued', () => pm.expect(json.access_token).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshTokenA}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/refresh",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. User service (internal)",
+      "description": "`/internal/**` is service-to-service: it is permitted without a token and is deliberately not routed by the api-gateway. Called here directly on `userServiceUrl`.",
+      "item": [
+        {
+          "name": "Get profile A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK - registration created the profile', () => pm.response.to.have.status(200));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test('profile is keyed by the Keycloak user id', () =>",
+                  "  pm.expect(json.id).to.eql(pm.collectionVariables.get('userIdA')));",
+                  "pm.test('email matches the registration', () =>",
+                  "  pm.expect(json.email).to.eql(pm.collectionVariables.get('emailA')));",
+                  "pm.test('names were carried across', () => {",
+                  "  pm.expect(json.firstName).to.eql('Alice');",
+                  "  pm.expect(json.lastName).to.eql('Anderson');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userServiceUrl}}/internal/api/v1/users/{{userIdA}}",
+              "host": ["{{userServiceUrl}}"],
+              "path": ["internal", "api", "v1", "users", "{{userIdA}}"]
+            },
+            "description": "Proves the auth -> user-service leg of registration ran. The profile id is the Keycloak `sub`, so no extra lookup is needed to join identity to profile."
+          }
+        },
+        {
+          "name": "Get unknown profile (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userServiceUrl}}/internal/api/v1/users/00000000-0000-0000-0000-000000000000",
+              "host": ["{{userServiceUrl}}"],
+              "path": ["internal", "api", "v1", "users", "00000000-0000-0000-0000-000000000000"]
+            }
+          }
+        },
+        {
+          "name": "Create duplicate profile (expect 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "pm.test('says which user already exists', () =>",
+                  "  pm.expect(pm.response.text()).to.include(pm.collectionVariables.get('userIdA')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{userIdA}}\",\n  \"email\": \"{{emailA}}\",\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Anderson\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{userServiceUrl}}/internal/api/v1/users",
+              "host": ["{{userServiceUrl}}"],
+              "path": ["internal", "api", "v1", "users"]
+            },
+            "description": "The endpoint auth calls during registration. Re-posting the same id is refused rather than silently overwriting the profile."
+          }
+        },
+        {
+          "name": "Create profile with bad email (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('names the offending field', () =>",
+                  "  pm.expect(pm.response.text()).to.include('email'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"11111111-1111-1111-1111-111111111111\",\n  \"email\": \"not-an-email\",\n  \"firstName\": \"Nope\",\n  \"lastName\": \"Nope\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{userServiceUrl}}/internal/api/v1/users",
+              "host": ["{{userServiceUrl}}"],
+              "path": ["internal", "api", "v1", "users"]
+            },
+            "description": "Bean Validation on the shared CreateUserRequest, reported per field."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Message service (internal)",
+      "description": "Chat membership is resolved server-side and ends up as `recipientIds` on the `message.created` event, which is what the websocket gateway fans out on. A client never names its own recipients.\n\nThe `clientMessageId` requests below are the important ones: they demonstrate that a repeated send is recognised rather than stored twice, which is what makes a client's REST fallback safe after a lost socket acknowledgement.",
+      "item": [
+        {
+          "name": "Create chat (A + B)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('chatId', json.id);",
+                  "console.log('chatId =', json.id);",
+                  "",
+                  "pm.test('both users are participants', () => {",
+                  "  pm.expect(json.participantIds).to.include(pm.collectionVariables.get('userIdA'));",
+                  "  pm.expect(json.participantIds).to.include(pm.collectionVariables.get('userIdB'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"participantIds\": [\"{{userIdA}}\", \"{{userIdB}}\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{messageServiceUrl}}/internal/api/v1/chats",
+              "host": ["{{messageServiceUrl}}"],
+              "path": ["internal", "api", "v1", "chats"]
+            },
+            "description": "Keep the returned id — you need it for MESSAGE_SEND over the socket too."
+          }
+        },
+        {
+          "name": "Create chat with one participant (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"participantIds\": [\"{{userIdA}}\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{messageServiceUrl}}/internal/api/v1/chats",
+              "host": ["{{messageServiceUrl}}"],
+              "path": ["internal", "api", "v1", "chats"]
+            }
+          }
+        },
+        {
+          "name": "Send message as A",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A fresh client-side id per send. The next request deliberately reuses it.",
+                  "pm.collectionVariables.set('clientMessageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created - stored for the first time', () => pm.response.to.have.status(201));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('messageId', json.id);",
+                  "",
+                  "pm.test('echoes clientMessageId so the sender can reconcile', () =>",
+                  "  pm.expect(json.clientMessageId).to.eql(pm.collectionVariables.get('clientMessageId')));",
+                  "pm.test('sender is A', () => pm.expect(json.senderId).to.eql(pm.collectionVariables.get('userIdA')));",
+                  "pm.test('has a server-assigned id and timestamp', () => {",
+                  "  pm.expect(json.id).to.be.a('string');",
+                  "  pm.expect(json.sentAt).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientMessageId\": \"{{clientMessageId}}\",\n  \"chatId\": \"{{chatId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"hello from postman\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
+              "host": ["{{messageServiceUrl}}"],
+              "path": ["internal", "api", "v1", "messages"]
+            },
+            "description": "This also publishes `message.created` to Kafka after the transaction commits. If a socket is open for A or B, they receive a MESSAGE_NEW frame from this request. You can see the event in kafka-ui at http://localhost:8082."
+          }
+        },
+        {
+          "name": "Send the same message again (idempotent)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK, not 201 - recognised as a retry', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('returns the message that already exists', () =>",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('messageId')));",
+                  "",
+                  "// No second message.created is published, so nobody sees the message twice."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientMessageId\": \"{{clientMessageId}}\",\n  \"chatId\": \"{{chatId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"hello from postman\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
+              "host": ["{{messageServiceUrl}}"],
+              "path": ["internal", "api", "v1", "messages"]
+            },
+            "description": "The exact same body as the previous request. This is what a client's REST fallback looks like after a WebSocket send succeeded but its acknowledgement was lost. It must return the stored message rather than create a second one, and must not re-announce it."
+          }
+        },
+        {
+          "name": "Same clientMessageId in a different chat (expect 201)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A second chat, so the same clientMessageId can be shown to be chat-scoped.",
+                  "const res = pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('messageServiceUrl') + '/internal/api/v1/chats',",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ participantIds: [",
+                  "    pm.collectionVariables.get('userIdA'), pm.collectionVariables.get('userIdB')",
+                  "  ]}) }",
+                  "}, (err, response) => {",
+                  "  if (err) { console.error(err); return; }",
+                  "  pm.collectionVariables.set('secondChatId', response.json().id);",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created - the constraint is scoped per chat', () => pm.response.to.have.status(201));",
+                  "pm.test('a genuinely different message', () =>",
+                  "  pm.expect(pm.response.json().id).to.not.eql(pm.collectionVariables.get('messageId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientMessageId\": \"{{clientMessageId}}\",\n  \"chatId\": \"{{secondChatId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"same client id, different chat\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
+              "host": ["{{messageServiceUrl}}"],
+              "path": ["internal", "api", "v1", "messages"]
+            },
+            "description": "The unique constraint is on (chat_id, client_message_id), so a client that numbers its sends per conversation cannot collide across chats."
+          }
+        },
+        {
+          "name": "Send as non-participant (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "pm.test('explains the sender is not in the chat', () =>",
+                  "  pm.expect(pm.response.text()).to.include('participant'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"chatId\": \"{{chatId}}\",\n  \"senderId\": \"99999999-9999-9999-9999-999999999999\",\n  \"body\": \"I should not be able to post here\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
+              "host": ["{{messageServiceUrl}}"],
+              "path": ["internal", "api", "v1", "messages"]
+            },
+            "description": "Membership is checked server-side. Without this, anything that could reach `/internal` could post into any conversation — which is also why this path must never be exposed through the api-gateway."
+          }
+        },
+        {
+          "name": "Send to unknown chat (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "// Over a socket this same failure arrives as {\"type\":\"ERROR\",\"code\":\"SEND_FAILED\",...}",
+                  "// carrying the clientMessageId, so the client knows which send to retry."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"chatId\": \"00000000-0000-0000-0000-000000000000\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"no such chat\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
+              "host": ["{{messageServiceUrl}}"],
+              "path": ["internal", "api", "v1", "messages"]
+            }
+          }
+        },
+        {
+          "name": "Send with malformed chat id (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"chatId\": \"not-a-uuid\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"bad chat id\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
+              "host": ["{{messageServiceUrl}}"],
+              "path": ["internal", "api", "v1", "messages"]
+            }
+          }
+        },
+        {
+          "name": "Send with blank body (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('names the offending field', () => pm.expect(pm.response.text()).to.include('body'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"chatId\": \"{{chatId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
+              "host": ["{{messageServiceUrl}}"],
+              "path": ["internal", "api", "v1", "messages"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Security boundaries",
+      "description": "Checks that the things which are supposed to be closed actually are.",
+      "item": [
+        {
+          "name": "Gateway rejects a request with no token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "// Only /api/v1/auth/** is public at the gateway; everything else needs a JWT."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "v1", "user", "me"]
+            },
+            "description": "There is no public user endpoint yet, so with a token this would 404 rather than 200. The point here is the 401 without one."
+          }
+        },
+        {
+          "name": "Gateway does not expose /internal paths",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('not reachable through the gateway', () =>",
+                  "  pm.expect(pm.response.code).to.be.oneOf([401, 403, 404]));",
+                  "",
+                  "pm.test('did not create anything', () =>",
+                  "  pm.expect(pm.response.code).to.not.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"participantIds\": [\"{{userIdA}}\", \"{{userIdB}}\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/message/internal/api/v1/chats",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["message", "internal", "api", "v1", "chats"]
+            },
+            "description": "With Spring Cloud Gateway's discovery locator enabled, every registered service gets an automatic `/{serviceId}/**` route, which would re-expose these internal paths. The locator is disabled, so this must not succeed."
+          }
+        },
+        {
+          "name": "WebSocket handshake without a token (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized before any upgrade', () => pm.response.to.have.status(401));",
+                  "// Authentication runs on the handshake, so a bad token never gets a socket at all."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Connection", "value": "Upgrade" },
+              { "key": "Upgrade", "value": "websocket" },
+              { "key": "Sec-WebSocket-Version", "value": "13" },
+              { "key": "Sec-WebSocket-Key", "value": "dGhlIHNhbXBsZSBub25jZQ==" }
+            ],
+            "url": {
+              "raw": "{{wsGatewayUrl}}/ws",
+              "host": ["{{wsGatewayUrl}}"],
+              "path": ["ws"]
+            }
+          }
+        },
+        {
+          "name": "WebSocket handshake with a bad token (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Connection", "value": "Upgrade" },
+              { "key": "Upgrade", "value": "websocket" },
+              { "key": "Sec-WebSocket-Version", "value": "13" },
+              { "key": "Sec-WebSocket-Key", "value": "dGhlIHNhbXBsZSBub25jZQ==" },
+              { "key": "Sec-WebSocket-Protocol", "value": "access_token, not.a.real.jwt" }
+            ],
+            "url": {
+              "raw": "{{wsGatewayUrl}}/ws",
+              "host": ["{{wsGatewayUrl}}"],
+              "path": ["ws"]
+            },
+            "description": "The token travels in the subprotocol list because browsers cannot set headers on a WebSocket handshake. An unverifiable token is refused here, not after connecting."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Teardown",
+      "item": [
+        {
+          "name": "Logout user A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('logout accepted', () => pm.expect(pm.response.code).to.be.oneOf([200, 204]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshTokenA}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/logout",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "v1", "auth", "logout"]
+            }
+          }
+        },
+        {
+          "name": "Refresh after logout (expect failure)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the refresh token is no longer usable', () =>",
+                  "  pm.expect(pm.response.code).to.be.oneOf([400, 401]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshTokenA}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/refresh",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            },
+            "description": "Confirms logout actually revoked the session at Keycloak rather than only discarding the client's copy."
+          }
+        }
+      ]
+    }
+  ]
+}
