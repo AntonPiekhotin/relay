@@ -13,13 +13,18 @@ services:
       retries: 5
     ports:
       - "5433:5432"
+    volumes:
+      - keycloak_postgres_data:/var/lib/postgresql/data
     networks:
       - relay-network
 
   keycloak:
     container_name: keycloak
     image: quay.io/keycloak/keycloak:26.0
-    command: start-dev
+    # --import-realm loads keycloak/import/*.json on startup; existing realms are skipped, not overwritten
+    command: start-dev --import-realm
+    volumes:
+      - ./keycloak/import:/opt/keycloak/data/import:ro
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
@@ -164,6 +169,7 @@ services:
 
 volumes:
   kafka_data:
+  keycloak_postgres_data:
   session-registry-data:
 
 networks:
