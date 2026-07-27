@@ -12,6 +12,9 @@ spring:
           jwk-set-uri: http://localhost:8081/realms/relay-realm/protocol/openid-connect/certs
   kafka:
     bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
     consumer:
       # Per-instance group, not a shared one. Any user's session may live on any instance, so
       # every instance must see every event. A shared group would split partitions across
@@ -27,11 +30,6 @@ relay:
     path: /ws
     outbound-buffer-size: 256
     client-id: relay-client
-
-message-service:
-  base-url: "lb://message"
-  messages-path: "/internal/api/v1/messages"
-  request-timeout: 5s
 
 # Registers so the gateway can resolve lb://message later. Clients connect to port 8083
 # directly; api-gateway has no route here and its discovery locator is off.

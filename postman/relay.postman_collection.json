@@ -2,28 +2,100 @@
   "info": {
     "_postman_id": "b7c1e2a4-5f3d-4a91-9c88-relay000001",
     "name": "Relay",
-    "description": "End-to-end collection for the Relay messenger.\n\n## Before you run\n\nStart infrastructure and services:\n\n```\ndocker compose up -d                     # keycloak, kafka, postgres x4, redis\n(cd eureka && ./gradlew bootRun)         # :8761\n(cd api-gateway && ./gradlew bootRun)    # :8080\n(cd auth && ./gradlew bootRun)           # random port, reached via the gateway\n(cd user && ./gradlew bootRun --args='--server.port=8085')\n(cd message && ./gradlew bootRun --args='--server.port=8084')\n(cd websocket-gateway && ./gradlew bootRun)  # :8083\n```\n\n`user` and `message` ship with `server.port: 0`, so they get a random port and are\nnormally reached only through Eureka. This collection calls their `/internal` endpoints\ndirectly, which needs a fixed port — hence the `--server.port` overrides above. Change the\n`userServiceUrl` / `messageServiceUrl` variables if you prefer different ones.\n\nKeycloak must have the `relay-realm` realm, a `relay-client` client with the secret in\n`auth/src/main/resources/application.yaml`, and a client role named `USER`.\n\n## How to run\n\nUse **Run collection** — the folders are ordered and later requests depend on variables\ncaptured by earlier ones (tokens, user ids, chat ids). Running requests one by one works\ntoo, as long as you go top to bottom.\n\n## WebSocket\n\nPostman collections cannot carry WebSocket requests, so the socket is not in here. Two ways\nto drive it:\n\n**1. Postman native WebSocket request** — New > WebSocket, URL `ws://localhost:8083/ws`.\nUnder the *Protocols* field add two entries: `access_token` and then your access token\nvalue. Connect, then send:\n\n```json\n{\"type\":\"PING\",\"nonce\":\"n-1\"}\n{\"type\":\"MESSAGE_SEND\",\"clientMessageId\":\"c-1\",\"chatId\":\"<chatId>\",\"body\":\"hello\"}\n```\n\n**2. Browser console** on any page:\n\n```js\nconst jwt = '<paste accessTokenA>';\nconst ws = new WebSocket('ws://localhost:8083/ws', ['access_token', jwt]);\nws.onmessage = e => console.log(e.data);\nws.onopen = () => ws.send(JSON.stringify({type:'PING', nonce:'n-1'}));\n// then:\n// ws.send(JSON.stringify({type:'MESSAGE_SEND', clientMessageId:crypto.randomUUID(), chatId:'<chatId>', body:'hi'}))\n```\n\nThe token goes in the subprotocol list rather than the URL, so it stays out of access logs\nand browser history. Expect `CONNECTED` first, then `MESSAGE_ACK` for a send, then\n`MESSAGE_NEW` pushed via Kafka (senders are among the recipients, so their own other\ndevices see the message too).\n\nTo watch delivery between two users, open a second socket as user B and send as user A.",
+    "description": "End-to-end collection for the Relay messenger.\n\n## Before you run\n\nStart infrastructure and services:\n\n```\ndocker compose up -d                     # keycloak, kafka, postgres x4, redis\n(cd eureka && ./gradlew bootRun)         # :8761\n(cd api-gateway && ./gradlew bootRun)    # :8080\n(cd auth && ./gradlew bootRun)           # random port, reached via the gateway\n(cd user && ./gradlew bootRun --args='--server.port=8085')\n(cd message && ./gradlew bootRun --args='--server.port=8084')\n(cd websocket-gateway && ./gradlew bootRun)  # :8083\n```\n\n`user` and `message` ship with `server.port: 0`, so they get a random port and are\nnormally reached only through Eureka. This collection calls their `/internal` endpoints\ndirectly, which needs a fixed port — hence the `--server.port` overrides above. Change the\n`userServiceUrl` / `messageServiceUrl` variables if you prefer different ones.\n\nKeycloak must have the `relay-realm` realm, a `relay-client` client with the secret in\n`auth/src/main/resources/application.yaml`, and a client role named `USER`.\n\n## How to run\n\nUse **Run collection** — the folders are ordered and later requests depend on variables\ncaptured by earlier ones (tokens, user ids, dialog ids). Running requests one by one works\ntoo, as long as you go top to bottom.\n\n## WebSocket\n\nPostman collections cannot carry WebSocket requests, so the socket is not in here. All frames\nuse the versioned envelope of ARCHITECTURE.md §10: `{\"v\":1,\"type\":\"<dot.name>\",\"id\":\"<uuid>\",\n\"ts\":<epoch-ms>,\"payload\":{...}}` with snake_case payload keys. The envelope `id` of a\n`message.send` IS the client message id (idempotency + ack correlation).\n\n**1. Postman native WebSocket request** — New > WebSocket, URL `ws://localhost:8083/ws`.\nUnder *Protocols* add two entries: `access_token` and then your access token value. Connect,\nthen send:\n\n```json\n{\"v\":1,\"type\":\"ping\",\"id\":\"p-1\"}\n{\"v\":1,\"type\":\"message.send\",\"id\":\"<uuid>\",\"ts\":1730000000000,\"payload\":{\"dialog_id\":\"<dialogId>\",\"text\":\"hello\"}}\n```\n\n**2. Browser console** on any page:\n\n```js\nconst jwt = '<paste accessTokenA>';\nconst ws = new WebSocket('ws://localhost:8083/ws', ['access_token', jwt]);\nws.onmessage = e => console.log(e.data);\nws.onopen = () => ws.send(JSON.stringify({v:1, type:'ping', id:'p-1'}));\n// then:\n// ws.send(JSON.stringify({v:1, type:'message.send', id:crypto.randomUUID(), ts:Date.now(),\n//                         payload:{dialog_id:'<dialogId>', text:'hi'}}))\n```\n\nThe token rides in the subprotocol list rather than the URL, so it stays out of access logs and\nbrowser history. Expect `session.connected` first; a send is answered with `ack` (correlated by\n`client_msg_id` = your envelope id) once the message is persisted — the send travels\ngateway → Kafka `messages.incoming` → message-service → Postgres → Kafka `messages.delivery` →\ngateway. Recipients (including your own other devices) get `message.new`. Failures come back as\n`error` frames whose `ref_id` echoes your envelope id — that is the cue to retry the same id\nover the REST fallback. To watch delivery between two users, open a second socket as user B and\nsend as user A.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "gatewayUrl", "value": "http://localhost:8080", "type": "string" },
-    { "key": "userServiceUrl", "value": "http://localhost:8085", "type": "string" },
-    { "key": "messageServiceUrl", "value": "http://localhost:8084", "type": "string" },
-    { "key": "wsGatewayUrl", "value": "http://localhost:8083", "type": "string" },
-    { "key": "eurekaUrl", "value": "http://localhost:8761", "type": "string" },
-    { "key": "keycloakUrl", "value": "http://localhost:8081", "type": "string" },
-    { "key": "password", "value": "Relay!2345", "type": "string" },
-    { "key": "emailA", "value": "", "type": "string" },
-    { "key": "emailB", "value": "", "type": "string" },
-    { "key": "accessTokenA", "value": "", "type": "string" },
-    { "key": "refreshTokenA", "value": "", "type": "string" },
-    { "key": "accessTokenB", "value": "", "type": "string" },
-    { "key": "userIdA", "value": "", "type": "string" },
-    { "key": "userIdB", "value": "", "type": "string" },
-    { "key": "chatId", "value": "", "type": "string" },
-    { "key": "secondChatId", "value": "", "type": "string" },
-    { "key": "clientMessageId", "value": "", "type": "string" },
-    { "key": "messageId", "value": "", "type": "string" }
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "userServiceUrl",
+      "value": "http://localhost:8085",
+      "type": "string"
+    },
+    {
+      "key": "messageServiceUrl",
+      "value": "http://localhost:8084",
+      "type": "string"
+    },
+    {
+      "key": "wsGatewayUrl",
+      "value": "http://localhost:8083",
+      "type": "string"
+    },
+    {
+      "key": "eurekaUrl",
+      "value": "http://localhost:8761",
+      "type": "string"
+    },
+    {
+      "key": "keycloakUrl",
+      "value": "http://localhost:8081",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "Relay!2345",
+      "type": "string"
+    },
+    {
+      "key": "emailA",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "emailB",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "accessTokenA",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refreshTokenA",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "accessTokenB",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userIdA",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userIdB",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "dialogId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "secondDialogId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "clientMessageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "messageId",
+      "value": "",
+      "type": "string"
+    }
   ],
   "item": [
     {
@@ -44,7 +116,7 @@
                   "const names = (Array.isArray(apps) ? apps : [apps]).map(a => a.name);",
                   "console.log('registered:', names.join(', '));",
                   "",
-                  "// message must be discoverable, or the gateway cannot resolve lb://message",
+                  "// message-service registers itself; sends travel over Kafka, not lb://",
                   "pm.test('message is registered', () => pm.expect(names).to.include('MESSAGE'));"
                 ]
               }
@@ -52,9 +124,23 @@
           ],
           "request": {
             "method": "GET",
-            "header": [{ "key": "Accept", "value": "application/json" }],
-            "url": { "raw": "{{eurekaUrl}}/eureka/apps", "host": ["{{eurekaUrl}}"], "path": ["eureka", "apps"] },
-            "description": "Lists what has registered with Eureka. If MESSAGE is missing, the websocket gateway will fail every send with SEND_FAILED."
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{eurekaUrl}}/eureka/apps",
+              "host": [
+                "{{eurekaUrl}}"
+              ],
+              "path": [
+                "eureka",
+                "apps"
+              ]
+            },
+            "description": "Lists what has registered with Eureka. Registration is required for future REST routing (history API through the api-gateway); the WebSocket send path itself travels over Kafka and does not use discovery."
           }
         },
         {
@@ -77,8 +163,15 @@
             "header": [],
             "url": {
               "raw": "{{keycloakUrl}}/realms/relay-realm/.well-known/openid-configuration",
-              "host": ["{{keycloakUrl}}"],
-              "path": ["realms", "relay-realm", ".well-known", "openid-configuration"]
+              "host": [
+                "{{keycloakUrl}}"
+              ],
+              "path": [
+                "realms",
+                "relay-realm",
+                ".well-known",
+                "openid-configuration"
+              ]
             },
             "description": "The websocket gateway and api-gateway both validate tokens against this realm's JWKS."
           }
@@ -117,7 +210,7 @@
                   "pm.collectionVariables.set('refreshTokenA', json.refresh_token);",
                   "",
                   "// The Keycloak user id is the token's `sub`. Everything downstream keys on it:",
-                  "// it is the user-service profile id, the chat participant id and the senderId.",
+                  "// it is the user-service profile id, the dialog participant id and the senderId.",
                   "const claims = JSON.parse(Buffer.from(json.access_token.split('.')[1], 'base64').toString('utf8'));",
                   "pm.collectionVariables.set('userIdA', claims.sub);",
                   "console.log('userIdA =', claims.sub);"
@@ -127,16 +220,32 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{emailA}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Anderson\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{gatewayUrl}}/api/v1/auth/register",
-              "host": ["{{gatewayUrl}}"],
-              "path": ["api", "v1", "auth", "register"]
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
             },
             "description": "Password rules (8-256 chars, upper, lower, digit, special) are declared on RegisterRequest but the controller has no @Valid, so they are not currently enforced by auth — Keycloak's own policy decides. `Relay!2345` satisfies both."
           }
@@ -167,16 +276,32 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{emailA}}\",\n  \"password\": \"{{password}}\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{gatewayUrl}}/api/v1/auth/login",
-              "host": ["{{gatewayUrl}}"],
-              "path": ["api", "v1", "auth", "login"]
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
             }
           }
         },
@@ -187,7 +312,9 @@
               "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.collectionVariables.set('emailB', `bob+${Date.now()}@relay.test`);"]
+                "exec": [
+                  "pm.collectionVariables.set('emailB', `bob+${Date.now()}@relay.test`);"
+                ]
               }
             },
             {
@@ -209,16 +336,32 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{emailB}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"Bob\",\n  \"lastName\": \"Brown\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{gatewayUrl}}/api/v1/auth/register",
-              "host": ["{{gatewayUrl}}"],
-              "path": ["api", "v1", "auth", "register"]
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
             },
             "description": "A second user, so you have a real counterpart for chats and for watching delivery over two sockets."
           }
@@ -240,16 +383,32 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{emailA}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Duplicate\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{gatewayUrl}}/api/v1/auth/register",
-              "host": ["{{gatewayUrl}}"],
-              "path": ["api", "v1", "auth", "register"]
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
             },
             "description": "Keycloak refuses the duplicate username before user-service is ever called, so no orphan profile is created. The exact status comes from Keycloak's error mapping."
           }
@@ -273,16 +432,32 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"refreshToken\": \"{{refreshTokenA}}\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{gatewayUrl}}/api/v1/auth/refresh",
-              "host": ["{{gatewayUrl}}"],
-              "path": ["api", "v1", "auth", "refresh"]
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh"
+              ]
             }
           }
         }
@@ -320,8 +495,16 @@
             "header": [],
             "url": {
               "raw": "{{userServiceUrl}}/internal/api/v1/users/{{userIdA}}",
-              "host": ["{{userServiceUrl}}"],
-              "path": ["internal", "api", "v1", "users", "{{userIdA}}"]
+              "host": [
+                "{{userServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "users",
+                "{{userIdA}}"
+              ]
             },
             "description": "Proves the auth -> user-service leg of registration ran. The profile id is the Keycloak `sub`, so no extra lookup is needed to join identity to profile."
           }
@@ -333,7 +516,9 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"]
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
               }
             }
           ],
@@ -342,8 +527,16 @@
             "header": [],
             "url": {
               "raw": "{{userServiceUrl}}/internal/api/v1/users/00000000-0000-0000-0000-000000000000",
-              "host": ["{{userServiceUrl}}"],
-              "path": ["internal", "api", "v1", "users", "00000000-0000-0000-0000-000000000000"]
+              "host": [
+                "{{userServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "users",
+                "00000000-0000-0000-0000-000000000000"
+              ]
             }
           }
         },
@@ -364,16 +557,32 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"id\": \"{{userIdA}}\",\n  \"email\": \"{{emailA}}\",\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Anderson\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{userServiceUrl}}/internal/api/v1/users",
-              "host": ["{{userServiceUrl}}"],
-              "path": ["internal", "api", "v1", "users"]
+              "host": [
+                "{{userServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "users"
+              ]
             },
             "description": "The endpoint auth calls during registration. Re-posting the same id is refused rather than silently overwriting the profile."
           }
@@ -395,16 +604,32 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"id\": \"11111111-1111-1111-1111-111111111111\",\n  \"email\": \"not-an-email\",\n  \"firstName\": \"Nope\",\n  \"lastName\": \"Nope\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{userServiceUrl}}/internal/api/v1/users",
-              "host": ["{{userServiceUrl}}"],
-              "path": ["internal", "api", "v1", "users"]
+              "host": [
+                "{{userServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "users"
+              ]
             },
             "description": "Bean Validation on the shared CreateUserRequest, reported per field."
           }
@@ -413,10 +638,10 @@
     },
     {
       "name": "3. Message service (internal)",
-      "description": "Chat membership is resolved server-side and ends up as `recipientIds` on the `message.created` event, which is what the websocket gateway fans out on. A client never names its own recipients.\n\nThe `clientMessageId` requests below are the important ones: they demonstrate that a repeated send is recognised rather than stored twice, which is what makes a client's REST fallback safe after a lost socket acknowledgement.",
+      "description": "Dialog membership is resolved server-side and ends up as `recipientIds` on the `messages.delivery` event, which is what the websocket gateway fans out on. A client never names its own recipients.\n\nThe `clientMessageId` requests below are the important ones: they demonstrate that a repeated send is recognised rather than stored twice, which is what makes a client's REST fallback safe after a lost socket acknowledgement.",
       "item": [
         {
-          "name": "Create chat (A + B)",
+          "name": "Create dialog (A + B)",
           "event": [
             {
               "listen": "test",
@@ -426,8 +651,8 @@
                   "pm.test('201 Created', () => pm.response.to.have.status(201));",
                   "",
                   "const json = pm.response.json();",
-                  "pm.collectionVariables.set('chatId', json.id);",
-                  "console.log('chatId =', json.id);",
+                  "pm.collectionVariables.set('dialogId', json.id);",
+                  "console.log('dialogId =', json.id);",
                   "",
                   "pm.test('both users are participants', () => {",
                   "  pm.expect(json.participantIds).to.include(pm.collectionVariables.get('userIdA'));",
@@ -439,43 +664,77 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"participantIds\": [\"{{userIdA}}\", \"{{userIdB}}\"]\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
-              "raw": "{{messageServiceUrl}}/internal/api/v1/chats",
-              "host": ["{{messageServiceUrl}}"],
-              "path": ["internal", "api", "v1", "chats"]
+              "raw": "{{messageServiceUrl}}/internal/api/v1/dialogs",
+              "host": [
+                "{{messageServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "dialogs"
+              ]
             },
-            "description": "Keep the returned id — you need it for MESSAGE_SEND over the socket too."
+            "description": "Keep the returned id — it is the payload.dialog_id for message.send over the socket too."
           }
         },
         {
-          "name": "Create chat with one participant (expect 400)",
+          "name": "Create dialog with one participant (expect 400)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"participantIds\": [\"{{userIdA}}\"]\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
-              "raw": "{{messageServiceUrl}}/internal/api/v1/chats",
-              "host": ["{{messageServiceUrl}}"],
-              "path": ["internal", "api", "v1", "chats"]
+              "raw": "{{messageServiceUrl}}/internal/api/v1/dialogs",
+              "host": [
+                "{{messageServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "dialogs"
+              ]
             }
           }
         },
@@ -515,18 +774,34 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"clientMessageId\": \"{{clientMessageId}}\",\n  \"chatId\": \"{{chatId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"hello from postman\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"clientMessageId\": \"{{clientMessageId}}\",\n  \"dialogId\": \"{{dialogId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"text\": \"hello from postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
-              "host": ["{{messageServiceUrl}}"],
-              "path": ["internal", "api", "v1", "messages"]
+              "host": [
+                "{{messageServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "messages"
+              ]
             },
-            "description": "This also publishes `message.created` to Kafka after the transaction commits. If a socket is open for A or B, they receive a MESSAGE_NEW frame from this request. You can see the event in kafka-ui at http://localhost:8082."
+            "description": "This also publishes `messages.delivery` to Kafka after the transaction commits. If a socket is open for A or B, they receive a MESSAGE_NEW frame from this request. You can see the event in kafka-ui at http://localhost:8082."
           }
         },
         {
@@ -542,38 +817,54 @@
                   "pm.test('returns the message that already exists', () =>",
                   "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('messageId')));",
                   "",
-                  "// No second message.created is published, so nobody sees the message twice."
+                  "// No second messages.delivery is published, so nobody sees the message twice."
                 ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"clientMessageId\": \"{{clientMessageId}}\",\n  \"chatId\": \"{{chatId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"hello from postman\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"clientMessageId\": \"{{clientMessageId}}\",\n  \"dialogId\": \"{{dialogId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"text\": \"hello from postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
-              "host": ["{{messageServiceUrl}}"],
-              "path": ["internal", "api", "v1", "messages"]
+              "host": [
+                "{{messageServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "messages"
+              ]
             },
             "description": "The exact same body as the previous request. This is what a client's REST fallback looks like after a WebSocket send succeeded but its acknowledgement was lost. It must return the stored message rather than create a second one, and must not re-announce it."
           }
         },
         {
-          "name": "Same clientMessageId in a different chat (expect 201)",
+          "name": "Same clientMessageId in another dialog (expect 200 - sender-scoped dedup)",
           "event": [
             {
               "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// A second chat, so the same clientMessageId can be shown to be chat-scoped.",
+                  "// A second chat, so the same clientMessageId can be shown to be dialog-scoped.",
                   "const res = pm.sendRequest({",
-                  "  url: pm.collectionVariables.get('messageServiceUrl') + '/internal/api/v1/chats',",
+                  "  url: pm.collectionVariables.get('messageServiceUrl') + '/internal/api/v1/dialogs',",
                   "  method: 'POST',",
                   "  header: { 'Content-Type': 'application/json' },",
                   "  body: { mode: 'raw', raw: JSON.stringify({ participantIds: [",
@@ -581,7 +872,7 @@
                   "  ]}) }",
                   "}, (err, response) => {",
                   "  if (err) { console.error(err); return; }",
-                  "  pm.collectionVariables.set('secondChatId', response.json().id);",
+                  "  pm.collectionVariables.set('secondDialogId', response.json().id);",
                   "});"
                 ]
               }
@@ -591,27 +882,43 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201 Created - the constraint is scoped per chat', () => pm.response.to.have.status(201));",
-                  "pm.test('a genuinely different message', () =>",
-                  "  pm.expect(pm.response.json().id).to.not.eql(pm.collectionVariables.get('messageId')));"
+                  "pm.test('200 OK - recognised as a retry, dedup is sender-scoped', () => pm.response.to.have.status(200));",
+                  "pm.test('returns the original message, not a new one', () =>",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('messageId')));"
                 ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"clientMessageId\": \"{{clientMessageId}}\",\n  \"chatId\": \"{{secondChatId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"same client id, different chat\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"clientMessageId\": \"{{clientMessageId}}\",\n  \"dialogId\": \"{{secondDialogId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"text\": \"same client id, different dialog\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
-              "host": ["{{messageServiceUrl}}"],
-              "path": ["internal", "api", "v1", "messages"]
+              "host": [
+                "{{messageServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "messages"
+              ]
             },
-            "description": "The unique constraint is on (chat_id, client_message_id), so a client that numbers its sends per conversation cannot collide across chats."
+            "description": "The unique constraint is (sender_id, client_message_id) per ARCHITECTURE.md §19.2 — the client owns its UUID space outright. So the same clientMessageId from the same sender is a recognised retry even in a different dialog: the stored original is returned with 200, and nothing new is created or announced."
           }
         },
         {
@@ -623,7 +930,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
-                  "pm.test('explains the sender is not in the chat', () =>",
+                  "pm.test('explains the sender is not in the dialog', () =>",
                   "  pm.expect(pm.response.text()).to.include('participant'));"
                 ]
               }
@@ -631,22 +938,38 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"chatId\": \"{{chatId}}\",\n  \"senderId\": \"99999999-9999-9999-9999-999999999999\",\n  \"body\": \"I should not be able to post here\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"dialogId\": \"{{dialogId}}\",\n  \"senderId\": \"99999999-9999-9999-9999-999999999999\",\n  \"text\": \"I should not be able to post here\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
-              "host": ["{{messageServiceUrl}}"],
-              "path": ["internal", "api", "v1", "messages"]
+              "host": [
+                "{{messageServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "messages"
+              ]
             },
             "description": "Membership is checked server-side. Without this, anything that could reach `/internal` could post into any conversation — which is also why this path must never be exposed through the api-gateway."
           }
         },
         {
-          "name": "Send to unknown chat (expect 404)",
+          "name": "Send to unknown dialog (expect 404)",
           "event": [
             {
               "listen": "test",
@@ -662,42 +985,76 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"chatId\": \"00000000-0000-0000-0000-000000000000\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"no such chat\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"dialogId\": \"00000000-0000-0000-0000-000000000000\",\n  \"senderId\": \"{{userIdA}}\",\n  \"text\": \"no such chat\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
-              "host": ["{{messageServiceUrl}}"],
-              "path": ["internal", "api", "v1", "messages"]
+              "host": [
+                "{{messageServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "messages"
+              ]
             }
           }
         },
         {
-          "name": "Send with malformed chat id (expect 400)",
+          "name": "Send with malformed dialog id (expect 400)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"chatId\": \"not-a-uuid\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"bad chat id\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"dialogId\": \"not-a-uuid\",\n  \"senderId\": \"{{userIdA}}\",\n  \"text\": \"bad dialog id\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
-              "host": ["{{messageServiceUrl}}"],
-              "path": ["internal", "api", "v1", "messages"]
+              "host": [
+                "{{messageServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "messages"
+              ]
             }
           }
         },
@@ -710,23 +1067,39 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
-                  "pm.test('names the offending field', () => pm.expect(pm.response.text()).to.include('body'));"
+                  "pm.test('names the offending field', () => pm.expect(pm.response.text()).to.include('text'));"
                 ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"chatId\": \"{{chatId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"body\": \"\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"dialogId\": \"{{dialogId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"text\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{messageServiceUrl}}/internal/api/v1/messages",
-              "host": ["{{messageServiceUrl}}"],
-              "path": ["internal", "api", "v1", "messages"]
+              "host": [
+                "{{messageServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "messages"
+              ]
             }
           }
         }
@@ -755,8 +1128,15 @@
             "header": [],
             "url": {
               "raw": "{{gatewayUrl}}/api/v1/user/me",
-              "host": ["{{gatewayUrl}}"],
-              "path": ["api", "v1", "user", "me"]
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me"
+              ]
             },
             "description": "There is no public user endpoint yet, so with a token this would 404 rather than 200. The point here is the 401 without one."
           }
@@ -780,16 +1160,33 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"participantIds\": [\"{{userIdA}}\", \"{{userIdB}}\"]\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
-              "raw": "{{gatewayUrl}}/message/internal/api/v1/chats",
-              "host": ["{{gatewayUrl}}"],
-              "path": ["message", "internal", "api", "v1", "chats"]
+              "raw": "{{gatewayUrl}}/message/internal/api/v1/dialogs",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "message",
+                "internal",
+                "api",
+                "v1",
+                "dialogs"
+              ]
             },
             "description": "With Spring Cloud Gateway's discovery locator enabled, every registered service gets an automatic `/{serviceId}/**` route, which would re-expose these internal paths. The locator is disabled, so this must not succeed."
           }
@@ -811,15 +1208,31 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Connection", "value": "Upgrade" },
-              { "key": "Upgrade", "value": "websocket" },
-              { "key": "Sec-WebSocket-Version", "value": "13" },
-              { "key": "Sec-WebSocket-Key", "value": "dGhlIHNhbXBsZSBub25jZQ==" }
+              {
+                "key": "Connection",
+                "value": "Upgrade"
+              },
+              {
+                "key": "Upgrade",
+                "value": "websocket"
+              },
+              {
+                "key": "Sec-WebSocket-Version",
+                "value": "13"
+              },
+              {
+                "key": "Sec-WebSocket-Key",
+                "value": "dGhlIHNhbXBsZSBub25jZQ=="
+              }
             ],
             "url": {
               "raw": "{{wsGatewayUrl}}/ws",
-              "host": ["{{wsGatewayUrl}}"],
-              "path": ["ws"]
+              "host": [
+                "{{wsGatewayUrl}}"
+              ],
+              "path": [
+                "ws"
+              ]
             }
           }
         },
@@ -830,23 +1243,44 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"]
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
               }
             }
           ],
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Connection", "value": "Upgrade" },
-              { "key": "Upgrade", "value": "websocket" },
-              { "key": "Sec-WebSocket-Version", "value": "13" },
-              { "key": "Sec-WebSocket-Key", "value": "dGhlIHNhbXBsZSBub25jZQ==" },
-              { "key": "Sec-WebSocket-Protocol", "value": "access_token, not.a.real.jwt" }
+              {
+                "key": "Connection",
+                "value": "Upgrade"
+              },
+              {
+                "key": "Upgrade",
+                "value": "websocket"
+              },
+              {
+                "key": "Sec-WebSocket-Version",
+                "value": "13"
+              },
+              {
+                "key": "Sec-WebSocket-Key",
+                "value": "dGhlIHNhbXBsZSBub25jZQ=="
+              },
+              {
+                "key": "Sec-WebSocket-Protocol",
+                "value": "access_token, not.a.real.jwt"
+              }
             ],
             "url": {
               "raw": "{{wsGatewayUrl}}/ws",
-              "host": ["{{wsGatewayUrl}}"],
-              "path": ["ws"]
+              "host": [
+                "{{wsGatewayUrl}}"
+              ],
+              "path": [
+                "ws"
+              ]
             },
             "description": "The token travels in the subprotocol list because browsers cannot set headers on a WebSocket handshake. An unverifiable token is refused here, not after connecting."
           }
@@ -871,16 +1305,32 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"refreshToken\": \"{{refreshTokenA}}\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{gatewayUrl}}/api/v1/auth/logout",
-              "host": ["{{gatewayUrl}}"],
-              "path": ["api", "v1", "auth", "logout"]
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
             }
           }
         },
@@ -900,16 +1350,32 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"refreshToken\": \"{{refreshTokenA}}\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{gatewayUrl}}/api/v1/auth/refresh",
-              "host": ["{{gatewayUrl}}"],
-              "path": ["api", "v1", "auth", "refresh"]
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh"
+              ]
             },
             "description": "Confirms logout actually revoked the session at Keycloak rather than only discarding the client's copy."
           }

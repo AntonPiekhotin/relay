@@ -1,62 +1,56 @@
 package com.relay.websocket.protocol
 
-import com.fasterxml.jackson.annotation.JsonSubTypes
-import com.fasterxml.jackson.annotation.JsonTypeInfo
 import java.time.Instant
 
-enum class ErrorCode {
-    /** Frame was not valid JSON, or carried an unknown `type`. */
-    BAD_FRAME,
+/**
+ * Error codes carried in `error` frames. Strings on the wire, so services can introduce codes
+ * (e.g. DIALOG_NOT_FOUND) without the gateway enumerating them — see [OutboundFrame.Error].
+ */
+object ErrorCodes {
+    /** Frame was not valid JSON, missing envelope fields, or carried an unknown `type`. */
+    const val BAD_FRAME = "BAD_FRAME"
 
-    /** Frame was understood but the gateway could not act on it. */
-    INTERNAL,
+    /** Envelope `v` is a protocol version this gateway does not speak. */
+    const val UNSUPPORTED_VERSION = "UNSUPPORTED_VERSION"
 
-    /** The send could not be stored. The client should retry the same clientMessageId over REST. */
-    SEND_FAILED
+    /** The send could not be handed off. Retry the same id over REST. */
+    const val SEND_FAILED = "SEND_FAILED"
 }
 
-/** Gateway to client. */
-@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
-@JsonSubTypes(
-    JsonSubTypes.Type(value = OutboundFrame.Connected::class, name = "CONNECTED"),
-    JsonSubTypes.Type(value = OutboundFrame.Pong::class, name = "PONG"),
-    JsonSubTypes.Type(value = OutboundFrame.MessageAck::class, name = "MESSAGE_ACK"),
-    JsonSubTypes.Type(value = OutboundFrame.MessageNew::class, name = "MESSAGE_NEW"),
-    JsonSubTypes.Type(value = OutboundFrame.Notification::class, name = "NOTIFICATION"),
-    JsonSubTypes.Type(value = OutboundFrame.CallSignal::class, name = "CALL_SIGNAL"),
-    JsonSubTypes.Type(value = OutboundFrame.Error::class, name = "ERROR")
-)
+/**
+ * Gateway to client, wrapped into the envelope (ARCHITECTURE.md §10.1) by [FrameCodec] with a
+ * server-assigned `ts`.
+ */
 sealed interface OutboundFrame {
 
-    /** First frame on every accepted socket, so the client can confirm who it is connected as. */
-    data class Connected(val userId: String, val sessionId: String) : OutboundFrame
-
-    data class Pong(val nonce: String? = null) : OutboundFrame
-
     /**
-     * Confirms a MESSAGE_SEND was stored. The client keys off [clientMessageId] to mark its
-     * pending send as delivered; not receiving this is its cue to retry over REST.
+     * First frame on every accepted socket. Not in the spec's §10.2 catalogue — a deliberate
+     * extension so the client can confirm who it is connected as (documented in the spec's
+     * frame table as part of this migration).
      */
-    data class MessageAck(
-        val clientMessageId: String,
-        val id: String,
-        val chatId: String,
-        val sentAt: Instant
+    data class SessionConnected(val userId: String, val sessionId: String) : OutboundFrame
+
+    data class Pong(val refId: String? = null) : OutboundFrame
+
+    /** Confirms a `message.send` was stored; correlated by [clientMsgId] (§20.1 step 7). */
+    data class Ack(
+        val clientMsgId: String,
+        val messageId: String,
+        val createdAt: Instant
     ) : OutboundFrame
 
     data class MessageNew(
-        val id: String,
-        val chatId: String,
+        val messageId: String,
+        val dialogId: String,
         val senderId: String,
-        val body: String,
-        val sentAt: Instant,
-        val clientMessageId: String? = null
+        val text: String,
+        val createdAt: Instant
     ) : OutboundFrame
 
     data class Notification(
-        val id: String,
+        val notificationId: String,
         val kind: String,
-        val payload: Map<String, Any?>,
+        val data: Map<String, Any?>,
         val createdAt: Instant
     ) : OutboundFrame
 
@@ -66,13 +60,10 @@ sealed interface OutboundFrame {
         val signal: Map<String, Any?>
     ) : OutboundFrame
 
-    /**
-     * [clientMessageId] is echoed when the failure can be tied to a specific client send, so the
-     * client knows which message to retry over REST.
-     */
+    /** [refId] echoes the envelope `id` of the frame that caused the error (§10.3). */
     data class Error(
-        val code: ErrorCode,
+        val code: String,
         val message: String,
-        val clientMessageId: String? = null
+        val refId: String? = null
     ) : OutboundFrame
 }

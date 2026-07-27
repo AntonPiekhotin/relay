@@ -1,20 +1,20 @@
 package com.relay.message.mapper
 
 import com.relay.common.dto.MessageResponse
-import com.relay.message.dto.ChatResponse
-import com.relay.message.model.Chat
+import com.relay.message.dto.DialogResponse
+import com.relay.message.model.Dialog
 import com.relay.message.model.Message
 
 fun Message.toResponse() = MessageResponse(
     id = id.toString(),
-    chatId = chatId.toString(),
+    dialogId = dialogId.toString(),
     senderId = senderId,
-    body = body,
+    text = text,
     sentAt = sentAt,
     clientMessageId = clientMessageId
 )
 
-fun Chat.toResponse() = ChatResponse(
+fun Dialog.toResponse() = DialogResponse(
     id = id.toString(),
     participantIds = participantIds.toSet(),
     createdAt = createdAt

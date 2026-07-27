@@ -8,6 +8,7 @@ import com.relay.websocket.session.RelaySession
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import reactor.test.StepVerifier
 
 class FrameDispatcherTest {
@@ -21,12 +22,12 @@ class FrameDispatcherTest {
         RelaySession("s-${counter++}", UserPrincipal(userId, null, emptySet()), bufferSize)
             .also(registry::register)
 
-    private fun messageFor(chatId: String) = OutboundFrame.MessageNew(
-        id = "m-1",
-        chatId = chatId,
+    private fun messageFor(dialogId: String) = OutboundFrame.MessageNew(
+        messageId = "m-1",
+        dialogId = dialogId,
         senderId = "alice",
-        body = "hi",
-        sentAt = Instant.parse("2026-07-26T10:00:00Z")
+        text = "hi",
+        createdAt = Instant.parse("2026-07-26T10:00:00Z")
     )
 
     @Test
@@ -35,12 +36,12 @@ class FrameDispatcherTest {
         val bobWeb = session("bob")
         val carol = session("carol")
 
-        val delivered = dispatcher.dispatch(listOf("bob", "carol"), messageFor("c-1"))
+        val delivered = dispatcher.deliverToUsers(listOf("bob", "carol"), messageFor("d-1"))
 
         assertEquals(3, delivered, "both of bob's sockets plus carol's")
         listOf(bobPhone, bobWeb, carol).forEach { session ->
             StepVerifier.create(session.frames)
-                .assertNext { assertEquals("c-1", (it as OutboundFrame.MessageNew).chatId) }
+                .assertNext { assertEquals("d-1", (it as OutboundFrame.MessageNew).dialogId) }
                 .thenCancel()
                 .verify()
         }
@@ -48,33 +49,70 @@ class FrameDispatcherTest {
 
     @Test
     fun `skips recipients that have no session`() {
-        val bob = session("bob")
+        session("bob")
 
-        val delivered = dispatcher.dispatch(listOf("bob", "nobody-here"), messageFor("c-1"))
+        val delivered = dispatcher.deliverToUsers(listOf("bob", "nobody-here"), messageFor("d-1"))
 
         assertEquals(1, delivered, "an offline recipient is not an error, it just gets nothing")
-        StepVerifier.create(bob.frames).expectNextCount(1).thenCancel().verify()
     }
 
     @Test
     fun `does not double-deliver when a recipient is listed twice`() {
         session("bob")
 
-        val delivered = dispatcher.dispatch(listOf("bob", "bob"), messageFor("c-1"))
+        assertEquals(1, dispatcher.deliverToUsers(listOf("bob", "bob"), messageFor("d-1")))
+    }
 
-        assertEquals(1, delivered)
+    @Test
+    fun `deliverToSession reaches exactly the sending device`() {
+        val phone = session("bob")
+        val web = session("bob")
+
+        val ack = OutboundFrame.Ack("c-1", "m-1", Instant.parse("2026-07-26T10:00:00Z"))
+        assertTrue(dispatcher.deliverToSession("bob", phone.sessionId, ack))
+
+        StepVerifier.create(phone.frames)
+            .assertNext { assertEquals("c-1", (it as OutboundFrame.Ack).clientMsgId) }
+            .thenCancel()
+            .verify()
+        // The other device saw nothing.
+        web.complete()
+        StepVerifier.create(web.frames).verifyComplete()
+    }
+
+    @Test
+    fun `deliverToSession returns false for a session not held locally`() {
+        session("bob")
+
+        assertTrue(!dispatcher.deliverToSession("bob", "no-such-session", OutboundFrame.Pong()))
+    }
+
+    @Test
+    fun `deliverToUsersExcept skips the acked session but reaches the same user's other devices`() {
+        val sender = session("alice")
+        val otherDevice = session("alice")
+        val bob = session("bob")
+
+        val delivered = dispatcher.deliverToUsersExcept(
+            listOf("alice", "bob"), sender.sessionId, messageFor("d-1")
+        )
+
+        assertEquals(2, delivered, "the other device and bob, not the sending session")
+        sender.complete()
+        StepVerifier.create(sender.frames).verifyComplete()
+        StepVerifier.create(otherDevice.frames).expectNextCount(1).thenCancel().verify()
+        StepVerifier.create(bob.frames).expectNextCount(1).thenCancel().verify()
     }
 
     @Test
     fun `closes a session that falls behind its outbound buffer`() {
-        // Capacity one, and nothing is draining, so the second frame cannot be buffered.
         val slow = session("bob", bufferSize = 1)
 
-        assertEquals(1, dispatcher.dispatch(listOf("bob"), messageFor("c-1")))
-        assertEquals(0, dispatcher.dispatch(listOf("bob"), messageFor("c-2")), "buffer is full")
+        assertEquals(1, dispatcher.deliverToUsers(listOf("bob"), messageFor("d-1")))
+        assertEquals(0, dispatcher.deliverToUsers(listOf("bob"), messageFor("d-2")), "buffer is full")
 
         StepVerifier.create(slow.frames)
-            .assertNext { assertEquals("c-1", (it as OutboundFrame.MessageNew).chatId) }
+            .assertNext { assertEquals("d-1", (it as OutboundFrame.MessageNew).dialogId) }
             .expectError(OutboundOverflowException::class.java)
             .verify()
     }
@@ -83,6 +121,6 @@ class FrameDispatcherTest {
     fun `drops a frame that names no recipients`() {
         session("bob")
 
-        assertEquals(0, dispatcher.dispatch(emptyList(), messageFor("c-1")))
+        assertEquals(0, dispatcher.deliverToUsers(emptyList(), messageFor("d-1")))
     }
 }

@@ -15,9 +15,15 @@ spring:
       cache:
         ttl: 5s
     gateway:
-      discovery:
-        locator:
-          enabled: false
+      server:
+        # spring-cloud-starter-gateway-server-webflux relocated ALL properties under
+        # spring.cloud.gateway.server.webflux.*; the legacy spring.cloud.gateway.* namespace
+        # is silently ignored (ARCHITECTURE.md §6.2). Locator stays off so no service gets an
+        # automatic /{serviceId}/** route — /internal paths must not be reachable from outside.
+        webflux:
+          discovery:
+            locator:
+              enabled: false
 
 eureka:
   client:
@@ -27,6 +33,6 @@ eureka:
 
 logging:
   level:
-    com.tony: DEBUG
+    com.relay: DEBUG
     org.springframework.security: DEBUG
     web: debug

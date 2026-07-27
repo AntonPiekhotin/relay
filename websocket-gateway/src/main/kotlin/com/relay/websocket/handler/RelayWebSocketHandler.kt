@@ -55,7 +55,7 @@ class RelayWebSocketHandler(
     private fun serve(session: WebSocketSession, principal: UserPrincipal): Mono<Void> {
         val relaySession = RelaySession(session.id, principal, props.outboundBufferSize)
         registry.register(relaySession)
-        relaySession.send(OutboundFrame.Connected(principal.userId, session.id))
+        relaySession.send(OutboundFrame.SessionConnected(principal.userId, session.id))
 
         val outbound = session.send(relaySession.frames.map { session.textMessage(codec.encode(it)) })
         val inbound = session.receive()

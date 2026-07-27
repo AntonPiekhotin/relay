@@ -2,7 +2,7 @@ package com.relay.websocket.consumer
 
 import com.relay.common.event.CallSignalEvent
 import com.relay.common.event.KafkaTopics
-import com.relay.common.event.MessageCreatedEvent
+import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
 import com.relay.websocket.fanout.FrameDispatcher
 import com.relay.websocket.protocol.OutboundFrame
@@ -10,11 +10,12 @@ import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
 
 /**
- * Every topic the gateway consumes does the same two things — decode, then fan out to the
- * recipients the producer named — so they live together rather than in a class each.
+ * Turns broker events into frames on live sockets. Runs on Kafka listener threads, not the
+ * Netty event loop — handing frames to a session's sink is the only work done here.
  *
- * These run on Kafka listener threads, not the Netty event loop. Handing frames to a session's
- * sink is the only work done here, so nothing blocks.
+ * Consumer groups are per-instance (see application.yaml): every gateway node sees every event
+ * and delivers to whatever sessions it holds. See the follow-up recorded in ARCHITECTURE.md §23
+ * before changing the group strategy.
  */
 @Component
 class KafkaFanoutListener(
@@ -22,33 +23,64 @@ class KafkaFanoutListener(
     private val codec: EventCodec
 ) {
 
-    @KafkaListener(topics = [KafkaTopics.MESSAGE_CREATED])
-    fun onMessageCreated(raw: String) {
-        val event = codec.decode(KafkaTopics.MESSAGE_CREATED, raw, MessageCreatedEvent::class.java)
+    /**
+     * The outcome of a send (ARCHITECTURE.md §20.1 steps 7–10): ack (or error) to the exact
+     * session that sent; `message.new` to every other session of every recipient. A duplicate
+     * outcome acks the sender but fans out nothing — the original already did.
+     */
+    @KafkaListener(topics = [KafkaTopics.MESSAGES_DELIVERY])
+    fun onDeliveryEvent(raw: String) {
+        val event = codec.decode(KafkaTopics.MESSAGES_DELIVERY, raw, MessageDeliveryEvent::class.java)
             ?: return
-        dispatcher.dispatch(
-            event.recipientIds,
-            OutboundFrame.MessageNew(
-                id = event.id,
-                chatId = event.chatId,
-                senderId = event.senderId,
-                body = event.body,
-                sentAt = event.sentAt,
-                clientMessageId = event.clientMessageId
-            )
-        )
+        when (event) {
+            is MessageDeliveryEvent.Accepted -> {
+                event.senderSessionId?.let { sessionId ->
+                    dispatcher.deliverToSession(
+                        event.senderId,
+                        sessionId,
+                        OutboundFrame.Ack(
+                            clientMsgId = event.clientMessageId,
+                            messageId = event.messageId,
+                            createdAt = event.sentAt
+                        )
+                    )
+                }
+                if (!event.duplicate) {
+                    dispatcher.deliverToUsersExcept(
+                        event.recipientIds,
+                        event.senderSessionId,
+                        OutboundFrame.MessageNew(
+                            messageId = event.messageId,
+                            dialogId = event.dialogId,
+                            senderId = event.senderId,
+                            text = event.text,
+                            createdAt = event.sentAt
+                        )
+                    )
+                }
+            }
+            is MessageDeliveryEvent.Rejected -> {
+                event.senderSessionId?.let { sessionId ->
+                    dispatcher.deliverToSession(
+                        event.senderId,
+                        sessionId,
+                        OutboundFrame.Error(event.code, event.reason, event.clientMessageId)
+                    )
+                }
+            }
+        }
     }
 
-    @KafkaListener(topics = [KafkaTopics.NOTIFICATION_CREATED])
-    fun onNotificationCreated(raw: String) {
-        val event = codec.decode(KafkaTopics.NOTIFICATION_CREATED, raw, NotificationCreatedEvent::class.java)
+    @KafkaListener(topics = [KafkaTopics.NOTIFICATIONS])
+    fun onNotification(raw: String) {
+        val event = codec.decode(KafkaTopics.NOTIFICATIONS, raw, NotificationCreatedEvent::class.java)
             ?: return
-        dispatcher.dispatch(
+        dispatcher.deliverToUsers(
             event.recipientIds,
             OutboundFrame.Notification(
-                id = event.id,
+                notificationId = event.id,
                 kind = event.kind,
-                payload = event.payload,
+                data = event.payload,
                 createdAt = event.createdAt
             )
         )
@@ -58,7 +90,7 @@ class KafkaFanoutListener(
     fun onCallSignal(raw: String) {
         val event = codec.decode(KafkaTopics.CALL_SIGNAL, raw, CallSignalEvent::class.java)
             ?: return
-        dispatcher.dispatch(
+        dispatcher.deliverToUsers(
             event.recipientIds,
             OutboundFrame.CallSignal(
                 callId = event.callId,

@@ -2,9 +2,9 @@ package com.relay.message.input.web
 
 import com.relay.common.dto.MessageResponse
 import com.relay.common.dto.SendMessageRequest
-import com.relay.message.dto.ChatResponse
-import com.relay.message.dto.CreateChatRequest
-import com.relay.message.service.ChatService
+import com.relay.message.dto.CreateDialogRequest
+import com.relay.message.dto.DialogResponse
+import com.relay.message.service.DialogService
 import com.relay.message.service.MessageService
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
@@ -16,14 +16,16 @@ import org.springframework.web.bind.annotation.RestController
 
 /**
  * Service-to-service only, under `/internal` so it is not reachable through the api-gateway.
- * That boundary is load-bearing: [SendMessageRequest.senderId] is trusted, because the caller
- * (websocket-gateway) has already authenticated the sender.
+ * That boundary is load-bearing: [SendMessageRequest.senderId] is trusted here.
+ *
+ * [send] is the REST fallback path of ARCHITECTURE.md §20.2 — it converges on the same
+ * [MessageService] the Kafka consumer uses, and the HTTP response plays the role of the ack.
  */
 @RestController
 @RequestMapping(path = ["/internal/api/v1"])
 class InternalMessageController(
     private val messageService: MessageService,
-    private val chatService: ChatService
+    private val dialogService: DialogService
 ) {
 
     /**
@@ -37,7 +39,7 @@ class InternalMessageController(
         return ResponseEntity.status(status).body(result.message)
     }
 
-    @PostMapping("/chats")
-    fun createChat(@Valid @RequestBody request: CreateChatRequest): ResponseEntity<ChatResponse> =
-        ResponseEntity.status(HttpStatus.CREATED).body(chatService.create(request))
+    @PostMapping("/dialogs")
+    fun createDialog(@Valid @RequestBody request: CreateDialogRequest): ResponseEntity<DialogResponse> =
+        ResponseEntity.status(HttpStatus.CREATED).body(dialogService.create(request))
 }

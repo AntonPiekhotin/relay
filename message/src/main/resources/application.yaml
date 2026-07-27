@@ -20,6 +20,13 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      # Shared group on purpose: send commands are work to be processed exactly once, so
+      # instances compete for partitions (unlike the gateway's per-instance broadcast groups).
+      group-id: message-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
 eureka:
   instance:
