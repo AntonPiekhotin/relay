@@ -1,21 +1,14 @@
-package com.relay.message.event
+package com.relay.message.output.event
 
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
-import com.relay.message.model.Message
+import com.relay.message.dto.event.MessagePersisted
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.stereotype.Component
 import org.springframework.transaction.event.TransactionPhase
 import org.springframework.transaction.event.TransactionalEventListener
 import tools.jackson.databind.json.JsonMapper
-
-/** Raised inside the send transaction; published to Kafka only once that transaction commits. */
-data class MessagePersisted(
-    val message: Message,
-    val recipientIds: Set<String>,
-    val senderSessionId: String?
-)
 
 @Component
 class MessageEventPublisher(

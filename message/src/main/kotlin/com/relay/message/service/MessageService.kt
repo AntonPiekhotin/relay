@@ -3,7 +3,7 @@ package com.relay.message.service
 import com.relay.common.dto.MessageResponse
 import com.relay.common.dto.SendMessageRequest
 import com.relay.common.exception.RelayException
-import com.relay.message.event.MessagePersisted
+import com.relay.message.dto.event.MessagePersisted
 import com.relay.message.mapper.toResponse
 import com.relay.message.model.Message
 import com.relay.message.repository.DialogRepository

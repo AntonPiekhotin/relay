@@ -1,4 +1,4 @@
-package com.relay.websocket.consumer
+package com.relay.websocket.input.event
 
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component

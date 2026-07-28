@@ -1,6 +1,7 @@
 package com.relay.websocket.fanout
 
 import com.relay.websocket.protocol.OutboundFrame
+import com.relay.websocket.session.RelaySession
 import com.relay.websocket.session.SessionRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -63,7 +64,7 @@ class FrameDispatcher(
         return delivered
     }
 
-    private fun push(session: com.relay.websocket.session.RelaySession, frame: OutboundFrame): Boolean =
+    private fun push(session: RelaySession, frame: OutboundFrame): Boolean =
         if (session.send(frame)) {
             true
         } else {

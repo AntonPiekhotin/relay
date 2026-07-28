@@ -1,11 +1,11 @@
-package com.relay.message.input.kafka
+package com.relay.message.input.event
 
 import com.relay.common.dto.SendMessageRequest
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.SendMessageCommand
 import com.relay.common.exception.RelayException
-import com.relay.message.event.MessageEventPublisher
+import com.relay.message.output.event.MessageEventPublisher
 import com.relay.message.mapper.toResponse
 import com.relay.message.repository.MessageRepository
 import com.relay.message.service.MessageService

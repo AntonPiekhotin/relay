@@ -1,4 +1,4 @@
-package com.relay.websocket.consumer
+package com.relay.websocket.input.event
 
 import com.relay.common.event.CallSignalEvent
 import com.relay.common.event.KafkaTopics
