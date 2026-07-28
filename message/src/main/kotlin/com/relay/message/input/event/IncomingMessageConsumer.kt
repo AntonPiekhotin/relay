@@ -9,6 +9,7 @@ import com.relay.message.output.event.MessageEventPublisher
 import com.relay.message.util.mapper.toResponse
 import com.relay.message.repository.MessageRepository
 import com.relay.message.service.MessageService
+import com.relay.message.service.SendResult
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
@@ -42,61 +43,78 @@ class IncomingMessageConsumer(
         val command = try {
             jsonMapper.readValue(raw, SendMessageCommand::class.java)
         } catch (ex: Exception) {
-            // Poison message: skipping is deliberate — retrying forever would stall the
-            // partition and block every well-formed send behind it.
             logger.error("Skipping malformed send command: {}", raw.take(512), ex)
             return
         }
         try {
             val result = messageService.send(command.toRequest(), command.senderSessionId)
-            // For a fresh message the Accepted event is published AFTER_COMMIT by
-            // MessageEventPublisher. A recognised retry commits nothing, so the ack event
-            // must be published here — otherwise the retry never gets its ack (§20.3).
-            if (!result.created) {
-                publisher.publish(
-                    MessageDeliveryEvent.Accepted(
-                        messageId = result.message.id,
-                        dialogId = result.message.dialogId,
-                        senderId = result.message.senderId,
-                        senderSessionId = command.senderSessionId,
-                        text = result.message.text,
-                        sentAt = result.message.sentAt,
-                        recipientIds = emptyList(),
-                        clientMessageId = result.message.clientMessageId,
-                        duplicate = true
-                    )
-                )
+            if (isAlreadyExists(result)) {
+                sendAckDirectly(result, command)
             }
         } catch (ex: RelayException) {
             publisher.publish(command.rejected(code(ex.statusCode), ex.message ?: "Send rejected"))
         } catch (ex: DataIntegrityViolationException) {
-            // Two retries of the same send raced; the constraint caught it. The row exists, so
-            // this is a duplicate ack, not a failure.
-            val existing = messageRepository
-                .findBySenderIdAndClientMessageId(command.senderId, command.clientMessageId)
-            if (existing == null) {
-                logger.error("Constraint violation but no stored message for {}", command.clientMessageId, ex)
-                publisher.publish(command.rejected("INTERNAL", "Send failed"))
-                return
-            }
-            val message = existing.toResponse()
-            publisher.publish(
-                MessageDeliveryEvent.Accepted(
-                    messageId = message.id,
-                    dialogId = message.dialogId,
-                    senderId = message.senderId,
-                    senderSessionId = command.senderSessionId,
-                    text = message.text,
-                    sentAt = message.sentAt,
-                    recipientIds = emptyList(),
-                    clientMessageId = message.clientMessageId,
-                    duplicate = true
-                )
-            )
+            handleExistedMessage(command, ex)
         } catch (ex: Exception) {
             logger.error("Send {} failed unexpectedly", command.clientMessageId, ex)
             publisher.publish(command.rejected("INTERNAL", "Send failed"))
         }
+    }
+
+    private fun isAlreadyExists(result: SendResult): Boolean = !result.created
+
+    /**
+     * It means that the original ack for this message was lost. So the ack event
+     * must be published here — otherwise the retry never gets its ack (§20.3).
+     */
+    private fun sendAckDirectly(
+        result: SendResult,
+        command: SendMessageCommand
+    ) {
+        publisher.publish(
+            MessageDeliveryEvent.Accepted(
+                messageId = result.message.id,
+                dialogId = result.message.dialogId,
+                senderId = result.message.senderId,
+                senderSessionId = command.senderSessionId,
+                text = result.message.text,
+                sentAt = result.message.sentAt,
+                recipientIds = emptyList(),
+                clientMessageId = result.message.clientMessageId,
+                duplicate = true
+            )
+        )
+    }
+
+    /**
+     * This is a duplicate ack, not a failure. The message was already saved in the database, but ack was lost,
+     * so the message is re-read from the database, and the ack is published directly.
+     */
+    private fun handleExistedMessage(
+        command: SendMessageCommand,
+        ex: DataIntegrityViolationException
+    ) {
+        val existing = messageRepository
+            .findBySenderIdAndClientMessageId(command.senderId, command.clientMessageId)
+        if (existing == null) {
+            logger.error("Constraint violation but no stored message for {}", command.clientMessageId, ex)
+            publisher.publish(command.rejected("INTERNAL", "Send failed"))
+            return
+        }
+        val message = existing.toResponse()
+        publisher.publish(
+            MessageDeliveryEvent.Accepted(
+                messageId = message.id,
+                dialogId = message.dialogId,
+                senderId = message.senderId,
+                senderSessionId = command.senderSessionId,
+                text = message.text,
+                sentAt = message.sentAt,
+                recipientIds = emptyList(),
+                clientMessageId = message.clientMessageId,
+                duplicate = true
+            )
+        )
     }
 
     private fun SendMessageCommand.toRequest() = SendMessageRequest(
