@@ -2,8 +2,8 @@ package com.relay.message.input.web
 
 import com.relay.common.dto.MessageResponse
 import com.relay.common.dto.SendMessageRequest
-import com.relay.message.dto.CreateDialogRequest
-import com.relay.message.dto.DialogResponse
+import com.relay.message.model.dto.CreateDialogRequest
+import com.relay.message.model.dto.DialogResponse
 import com.relay.message.service.DialogService
 import com.relay.message.service.MessageService
 import jakarta.validation.Valid

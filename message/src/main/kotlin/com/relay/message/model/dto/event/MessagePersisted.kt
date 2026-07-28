@@ -1,4 +1,4 @@
-package com.relay.message.dto.event
+package com.relay.message.model.dto.event
 
 import com.relay.message.model.Message
 

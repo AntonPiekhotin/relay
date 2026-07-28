@@ -5,7 +5,7 @@ import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.SendMessageCommand
 import com.relay.common.exception.RelayException
-import com.relay.message.dto.CreateDialogRequest
+import com.relay.message.model.dto.CreateDialogRequest
 import java.time.Duration
 import java.util.UUID
 import kotlin.test.AfterTest

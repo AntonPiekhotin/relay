@@ -1,4 +1,4 @@
-package com.relay.message.dto
+package com.relay.message.model.dto
 
 import jakarta.validation.constraints.NotEmpty
 import jakarta.validation.constraints.Size

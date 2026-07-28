@@ -1,6 +1,7 @@
 package com.relay.websocket.fanout
 
 import com.relay.common.model.UserPrincipal
+import com.relay.websocket.output.socket.FrameDispatcher
 import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.InMemorySessionRegistry
 import com.relay.websocket.session.OutboundOverflowException

@@ -1,8 +1,8 @@
 package com.relay.message.service
 
-import com.relay.message.dto.CreateDialogRequest
-import com.relay.message.dto.DialogResponse
-import com.relay.message.mapper.toResponse
+import com.relay.message.model.dto.CreateDialogRequest
+import com.relay.message.model.dto.DialogResponse
+import com.relay.message.util.mapper.toResponse
 import com.relay.message.model.Dialog
 import com.relay.message.repository.DialogRepository
 import org.springframework.stereotype.Service

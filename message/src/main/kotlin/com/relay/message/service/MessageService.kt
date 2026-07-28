@@ -3,8 +3,8 @@ package com.relay.message.service
 import com.relay.common.dto.MessageResponse
 import com.relay.common.dto.SendMessageRequest
 import com.relay.common.exception.RelayException
-import com.relay.message.dto.event.MessagePersisted
-import com.relay.message.mapper.toResponse
+import com.relay.message.model.dto.event.MessagePersisted
+import com.relay.message.util.mapper.toResponse
 import com.relay.message.model.Message
 import com.relay.message.repository.DialogRepository
 import com.relay.message.repository.MessageRepository
@@ -14,9 +14,6 @@ import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-
-/** [created] is false when an existing message was returned for a repeated clientMessageId. */
-data class SendResult(val message: MessageResponse, val recipientIds: Set<String>, val created: Boolean)
 
 /**
  * The single convergence point for both send paths — the Kafka consumer and the REST fallback
@@ -78,3 +75,6 @@ class MessageService(
             throw RelayException(HttpStatus.BAD_REQUEST.value(), "$field is not a valid id: $this", ex)
         }
 }
+
+/** [created] is false when an existing message was returned for a repeated clientMessageId. */
+data class SendResult(val message: MessageResponse, val recipientIds: Set<String>, val created: Boolean)

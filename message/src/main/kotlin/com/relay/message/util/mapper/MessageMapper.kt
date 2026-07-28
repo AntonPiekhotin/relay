@@ -1,7 +1,7 @@
-package com.relay.message.mapper
+package com.relay.message.util.mapper
 
 import com.relay.common.dto.MessageResponse
-import com.relay.message.dto.DialogResponse
+import com.relay.message.model.dto.DialogResponse
 import com.relay.message.model.Dialog
 import com.relay.message.model.Message
 

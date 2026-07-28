@@ -2,7 +2,7 @@ package com.relay.message.output.event
 
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
-import com.relay.message.dto.event.MessagePersisted
+import com.relay.message.model.dto.event.MessagePersisted
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.stereotype.Component

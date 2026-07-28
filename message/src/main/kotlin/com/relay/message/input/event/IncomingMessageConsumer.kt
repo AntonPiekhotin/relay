@@ -6,7 +6,7 @@ import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.SendMessageCommand
 import com.relay.common.exception.RelayException
 import com.relay.message.output.event.MessageEventPublisher
-import com.relay.message.mapper.toResponse
+import com.relay.message.util.mapper.toResponse
 import com.relay.message.repository.MessageRepository
 import com.relay.message.service.MessageService
 import org.slf4j.LoggerFactory

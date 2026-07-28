@@ -1,4 +1,4 @@
-package com.relay.websocket.fanout
+package com.relay.websocket.output.socket
 
 import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.RelaySession

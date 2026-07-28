@@ -4,8 +4,9 @@ import com.relay.common.event.CallSignalEvent
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
-import com.relay.websocket.fanout.FrameDispatcher
+import com.relay.websocket.output.socket.FrameDispatcher
 import com.relay.websocket.protocol.OutboundFrame
+import com.relay.websocket.util.EventCodec
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
 
