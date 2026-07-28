@@ -48,7 +48,7 @@ class IncomingMessageConsumer(
         }
         try {
             val result = messageService.send(command.toRequest(), command.senderSessionId)
-            if (isAlreadyExists(result)) {
+            if (alreadyExists(result)) {
                 sendAckDirectly(result, command)
             }
         } catch (ex: RelayException) {
@@ -61,7 +61,7 @@ class IncomingMessageConsumer(
         }
     }
 
-    private fun isAlreadyExists(result: SendResult): Boolean = !result.created
+    private fun alreadyExists(result: SendResult): Boolean = !result.created
 
     /**
      * It means that the original ack for this message was lost. So the ack event
