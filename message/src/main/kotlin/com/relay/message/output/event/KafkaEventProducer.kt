@@ -11,7 +11,7 @@ import org.springframework.transaction.event.TransactionalEventListener
 import tools.jackson.databind.json.JsonMapper
 
 @Component
-class MessageEventPublisher(
+class KafkaEventProducer(
     private val kafkaTemplate: KafkaTemplate<String, String>,
     private val jsonMapper: JsonMapper
 ) {

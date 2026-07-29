@@ -5,7 +5,7 @@ import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.SendMessageCommand
 import com.relay.common.exception.RelayException
-import com.relay.message.output.event.MessageEventPublisher
+import com.relay.message.output.event.KafkaEventProducer
 import com.relay.message.util.mapper.toResponse
 import com.relay.message.repository.MessageRepository
 import com.relay.message.service.MessageService
@@ -29,10 +29,10 @@ import tools.jackson.databind.json.JsonMapper
  * here (each command must be processed once) — unlike the gateway's broadcast groups.
  */
 @Component
-class IncomingMessageConsumer(
+class KafkaEventConsumer(
     private val messageService: MessageService,
     private val messageRepository: MessageRepository,
-    private val publisher: MessageEventPublisher,
+    private val eventProducer: KafkaEventProducer,
     private val jsonMapper: JsonMapper
 ) {
 
@@ -48,20 +48,20 @@ class IncomingMessageConsumer(
         }
         try {
             val result = messageService.send(command.toRequest(), command.senderSessionId)
-            if (alreadyExists(result)) {
+            if (result.alreadyExists()) {
                 sendAckDirectly(result, command)
             }
         } catch (ex: RelayException) {
-            publisher.publish(command.rejected(code(ex.statusCode), ex.message ?: "Send rejected"))
+            eventProducer.publish(command.rejected(code(ex.statusCode), ex.message ?: "Send rejected"))
         } catch (ex: DataIntegrityViolationException) {
             handleExistedMessage(command, ex)
         } catch (ex: Exception) {
             logger.error("Send {} failed unexpectedly", command.clientMessageId, ex)
-            publisher.publish(command.rejected("INTERNAL", "Send failed"))
+            eventProducer.publish(command.rejected("INTERNAL", "Send failed"))
         }
     }
 
-    private fun alreadyExists(result: SendResult): Boolean = !result.created
+    private fun SendResult.alreadyExists(): Boolean = !this.created
 
     /**
      * It means that the original ack for this message was lost. So the ack event
@@ -71,7 +71,7 @@ class IncomingMessageConsumer(
         result: SendResult,
         command: SendMessageCommand
     ) {
-        publisher.publish(
+        eventProducer.publish(
             MessageDeliveryEvent.Accepted(
                 messageId = result.message.id,
                 dialogId = result.message.dialogId,
@@ -98,11 +98,11 @@ class IncomingMessageConsumer(
             .findBySenderIdAndClientMessageId(command.senderId, command.clientMessageId)
         if (existing == null) {
             logger.error("Constraint violation but no stored message for {}", command.clientMessageId, ex)
-            publisher.publish(command.rejected("INTERNAL", "Send failed"))
+            eventProducer.publish(command.rejected("INTERNAL", "Send failed"))
             return
         }
         val message = existing.toResponse()
-        publisher.publish(
+        eventProducer.publish(
             MessageDeliveryEvent.Accepted(
                 messageId = message.id,
                 dialogId = message.dialogId,
