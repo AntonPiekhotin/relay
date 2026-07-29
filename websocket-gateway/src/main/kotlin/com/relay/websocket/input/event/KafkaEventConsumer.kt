@@ -62,7 +62,7 @@ class KafkaEventConsumer(
     private fun sendMessageToRecipients(event: MessageDeliveryEvent.Accepted) {
         dispatcher.deliverToUsersExcept(
             event.recipientIds,
-            event.senderSessionId,
+            setOf(event.senderSessionId),
             OutboundFrame.MessageNew(
                 messageId = event.messageId,
                 dialogId = event.dialogId,

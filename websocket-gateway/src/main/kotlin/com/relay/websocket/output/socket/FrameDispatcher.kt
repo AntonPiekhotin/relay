@@ -53,12 +53,12 @@ class FrameDispatcher(
     /** Same as [deliverToUsers], but skips one session (the one that gets an ack instead). */
     fun deliverToUsersExcept(
         recipientIds: Collection<String>,
-        excludedSessionId: String?,
+        excludedSessionIds: Set<String?>,
         frame: OutboundFrame
     ): Int {
         var delivered = 0
         registry.sessionsOf(recipientIds).forEach { session ->
-            if (session.sessionId != excludedSessionId && push(session, frame)) delivered++
+            if (!excludedSessionIds.contains(session.sessionId) && push(session, frame)) delivered++
         }
         logger.debug("Dispatched {} to {} session(s)", frame::class.simpleName, delivered)
         return delivered
