@@ -1,6 +1,6 @@
 package com.relay.websocket.config
 
-import com.relay.websocket.handler.RelayWebSocketHandler
+import com.relay.websocket.input.handler.RelayWebSocketHandler
 import com.relay.websocket.util.WebSocketProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration

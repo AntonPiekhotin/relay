@@ -1,4 +1,4 @@
-package com.relay.websocket.handler
+package com.relay.websocket.input.handler
 
 import com.relay.common.event.SendMessageCommand
 import com.relay.websocket.output.event.SendMessageProducer

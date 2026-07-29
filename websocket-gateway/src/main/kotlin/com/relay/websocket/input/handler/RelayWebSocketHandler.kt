@@ -1,4 +1,4 @@
-package com.relay.websocket.handler
+package com.relay.websocket.input.handler
 
 import com.relay.common.model.UserPrincipal
 import com.relay.websocket.protocol.ACCESS_TOKEN_PROTOCOL

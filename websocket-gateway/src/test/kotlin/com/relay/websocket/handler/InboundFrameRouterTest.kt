@@ -3,6 +3,7 @@ package com.relay.websocket.handler
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.SendMessageCommand
 import com.relay.common.model.UserPrincipal
+import com.relay.websocket.input.handler.InboundFrameRouter
 import com.relay.websocket.output.event.SendMessageProducer
 import com.relay.websocket.protocol.ErrorCodes
 import com.relay.websocket.protocol.FrameCodec
