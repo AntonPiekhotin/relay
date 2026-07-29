@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component
  * before changing the group strategy.
  */
 @Component
-class KafkaFanoutListener(
+class KafkaEventConsumer(
     private val dispatcher: FrameDispatcher,
     private val codec: EventCodec
 ) {
@@ -35,40 +35,51 @@ class KafkaFanoutListener(
             ?: return
         when (event) {
             is MessageDeliveryEvent.Accepted -> {
-                event.senderSessionId?.let { sessionId ->
-                    dispatcher.deliverToSession(
-                        event.senderId,
-                        sessionId,
-                        OutboundFrame.Ack(
-                            clientMsgId = event.clientMessageId,
-                            messageId = event.messageId,
-                            createdAt = event.sentAt
-                        )
-                    )
-                }
+                sendAckToMessageSender(event)
                 if (!event.duplicate) {
-                    dispatcher.deliverToUsersExcept(
-                        event.recipientIds,
-                        event.senderSessionId,
-                        OutboundFrame.MessageNew(
-                            messageId = event.messageId,
-                            dialogId = event.dialogId,
-                            senderId = event.senderId,
-                            text = event.text,
-                            createdAt = event.sentAt
-                        )
-                    )
+                    sendMessageToRecipients(event)
                 }
             }
-            is MessageDeliveryEvent.Rejected -> {
-                event.senderSessionId?.let { sessionId ->
-                    dispatcher.deliverToSession(
-                        event.senderId,
-                        sessionId,
-                        OutboundFrame.Error(event.code, event.reason, event.clientMessageId)
-                    )
-                }
-            }
+            is MessageDeliveryEvent.Rejected -> handleRejectedMessage(event)
+
+        }
+    }
+
+    private fun sendAckToMessageSender(event: MessageDeliveryEvent.Accepted) {
+        event.senderSessionId?.let { sessionId ->
+            dispatcher.deliverToSession(
+                event.senderId,
+                sessionId,
+                OutboundFrame.Ack(
+                    clientMsgId = event.clientMessageId,
+                    messageId = event.messageId,
+                    createdAt = event.sentAt
+                )
+            )
+        }
+    }
+
+    private fun sendMessageToRecipients(event: MessageDeliveryEvent.Accepted) {
+        dispatcher.deliverToUsersExcept(
+            event.recipientIds,
+            event.senderSessionId,
+            OutboundFrame.MessageNew(
+                messageId = event.messageId,
+                dialogId = event.dialogId,
+                senderId = event.senderId,
+                text = event.text,
+                createdAt = event.sentAt
+            )
+        )
+    }
+
+    private fun handleRejectedMessage(event: MessageDeliveryEvent.Rejected) {
+        event.senderSessionId?.let { sessionId ->
+            dispatcher.deliverToSession(
+                event.senderId,
+                sessionId,
+                OutboundFrame.Error(event.code, event.reason, event.clientMessageId)
+            )
         }
     }
 

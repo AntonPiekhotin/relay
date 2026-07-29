@@ -4,7 +4,7 @@ import com.relay.common.event.KafkaTopics
 import com.relay.common.event.SendMessageCommand
 import com.relay.common.model.UserPrincipal
 import com.relay.websocket.input.handler.InboundFrameRouter
-import com.relay.websocket.output.event.SendMessageProducer
+import com.relay.websocket.output.event.KafkaEventProducer
 import com.relay.websocket.protocol.ErrorCodes
 import com.relay.websocket.protocol.FrameCodec
 import com.relay.websocket.protocol.OutboundFrame
@@ -36,7 +36,7 @@ class InboundFrameRouterTest {
 
     // A real producer over a mocked template: the test pins the whole gateway-side contract —
     // topic, partition key, and serialized command — not just that "something was published".
-    private val router = InboundFrameRouter(FrameCodec(), SendMessageProducer(kafkaTemplate, jsonMapper))
+    private val router = InboundFrameRouter(FrameCodec(), KafkaEventProducer(kafkaTemplate, jsonMapper))
 
     private fun session(userId: String = "alice") =
         RelaySession("s-1", UserPrincipal(userId, null, emptySet()), 16)

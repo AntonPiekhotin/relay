@@ -41,7 +41,7 @@ import tools.jackson.databind.json.JsonMapper
     partitions = 1,
     topics = [KafkaTopics.MESSAGES_DELIVERY, KafkaTopics.NOTIFICATIONS, KafkaTopics.CALL_SIGNAL]
 )
-class KafkaFanoutListenerIT {
+class KafkaEventConsumerIT {
 
     @Autowired private lateinit var registry: SessionRegistry
     @Autowired private lateinit var kafkaTemplate: KafkaTemplate<String, String>

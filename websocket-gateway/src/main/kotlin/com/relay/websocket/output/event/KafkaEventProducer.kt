@@ -15,7 +15,7 @@ import tools.jackson.databind.json.JsonMapper
  * Keyed by dialog so a conversation's sends stay ordered within one partition (§13.2).
  */
 @Component
-class SendMessageProducer(
+class KafkaEventProducer(
     private val kafkaTemplate: KafkaTemplate<String, String>,
     private val jsonMapper: JsonMapper
 ) {
