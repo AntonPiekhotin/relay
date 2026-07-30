@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b7c1e2a4-5f3d-4a91-9c88-relay000001",
     "name": "Relay",
-    "description": "End-to-end collection for the Relay messenger.\n\n## Before you run\n\nStart infrastructure and services:\n\n```\ndocker compose up -d                     # keycloak, kafka, postgres x4, redis\n(cd eureka && ./gradlew bootRun)         # :8761\n(cd api-gateway && ./gradlew bootRun)    # :8080\n(cd auth && ./gradlew bootRun)           # random port, reached via the gateway\n(cd user && ./gradlew bootRun --args='--server.port=8085')\n(cd message && ./gradlew bootRun --args='--server.port=8084')\n(cd websocket-gateway && ./gradlew bootRun)  # :8083\n```\n\n`user` and `message` ship with `server.port: 0`, so they get a random port and are\nnormally reached only through Eureka. This collection calls their `/internal` endpoints\ndirectly, which needs a fixed port — hence the `--server.port` overrides above. Change the\n`userServiceUrl` / `messageServiceUrl` variables if you prefer different ones.\n\nKeycloak must have the `relay-realm` realm, a `relay-client` client with the secret in\n`auth/src/main/resources/application.yaml`, and a client role named `USER`.\n\n## How to run\n\nUse **Run collection** — the folders are ordered and later requests depend on variables\ncaptured by earlier ones (tokens, user ids, dialog ids). Running requests one by one works\ntoo, as long as you go top to bottom.\n\n## WebSocket\n\nPostman collections cannot carry WebSocket requests, so the socket is not in here. All frames\nuse the versioned envelope of ARCHITECTURE.md §10: `{\"v\":1,\"type\":\"<dot.name>\",\"id\":\"<uuid>\",\n\"ts\":<epoch-ms>,\"payload\":{...}}` with snake_case payload keys. The envelope `id` of a\n`message.send` IS the client message id (idempotency + ack correlation).\n\n**1. Postman native WebSocket request** — New > WebSocket, URL `ws://localhost:8083/ws`.\nUnder *Protocols* add two entries: `access_token` and then your access token value. Connect,\nthen send:\n\n```json\n{\"v\":1,\"type\":\"ping\",\"id\":\"p-1\"}\n{\"v\":1,\"type\":\"message.send\",\"id\":\"<uuid>\",\"ts\":1730000000000,\"payload\":{\"dialog_id\":\"<dialogId>\",\"text\":\"hello\"}}\n```\n\n**2. Browser console** on any page:\n\n```js\nconst jwt = '<paste accessTokenA>';\nconst ws = new WebSocket('ws://localhost:8083/ws', ['access_token', jwt]);\nws.onmessage = e => console.log(e.data);\nws.onopen = () => ws.send(JSON.stringify({v:1, type:'ping', id:'p-1'}));\n// then:\n// ws.send(JSON.stringify({v:1, type:'message.send', id:crypto.randomUUID(), ts:Date.now(),\n//                         payload:{dialog_id:'<dialogId>', text:'hi'}}))\n```\n\nThe token rides in the subprotocol list rather than the URL, so it stays out of access logs and\nbrowser history. Expect `session.connected` first; a send is answered with `ack` (correlated by\n`client_msg_id` = your envelope id) once the message is persisted — the send travels\ngateway → Kafka `messages.incoming` → message-service → Postgres → Kafka `messages.delivery` →\ngateway. Recipients (including your own other devices) get `message.new`. Failures come back as\n`error` frames whose `ref_id` echoes your envelope id — that is the cue to retry the same id\nover the REST fallback. To watch delivery between two users, open a second socket as user B and\nsend as user A.",
+    "description": "End-to-end collection for the Relay messenger.\n\n## Before you run\n\nStart infrastructure and services:\n\n```\ndocker compose up -d                     # keycloak, kafka, postgres x4, redis\n(cd eureka && ./gradlew bootRun)         # :8761\n(cd api-gateway && ./gradlew bootRun)    # :8080\n(cd auth && ./gradlew bootRun)           # random port, reached via the gateway\n(cd user && ./gradlew bootRun --args='--server.port=8085')\n(cd message && ./gradlew bootRun --args='--server.port=8084')\n(cd notification && ./gradlew bootRun)\n(cd websocket-gateway && ./gradlew bootRun)  # :8083\n```\n\n`user` and `message` ship with `server.port: 0`, so they get a random port and are\nnormally reached only through Eureka. This collection calls their `/internal` endpoints\ndirectly, which needs a fixed port — hence the `--server.port` overrides above. Change the\n`userServiceUrl` / `messageServiceUrl` variables if you prefer different ones.\n\nKeycloak must have the `relay-realm` realm, a `relay-client` client with the secret in\n`auth/src/main/resources/application.yaml`, and a client role named `USER`.\n\n## How to run\n\nUse **Run collection** — the folders are ordered and later requests depend on variables\ncaptured by earlier ones (tokens, user ids, dialog ids). Running requests one by one works\ntoo, as long as you go top to bottom.\n\n## WebSocket\n\nPostman collections cannot carry WebSocket requests, so the socket is not in here. All frames\nuse the versioned envelope of ARCHITECTURE.md §10: `{\"v\":1,\"type\":\"<dot.name>\",\"id\":\"<uuid>\",\n\"ts\":<epoch-ms>,\"payload\":{...}}` with snake_case payload keys. The envelope `id` of a\n`message.send` IS the client message id (idempotency + ack correlation).\n\n**1. Postman native WebSocket request** — New > WebSocket, URL `ws://localhost:8083/ws`.\nUnder *Protocols* add two entries: `access_token` and then your access token value. Connect,\nthen send:\n\n```json\n{\"v\":1,\"type\":\"ping\",\"id\":\"p-1\"}\n{\"v\":1,\"type\":\"message.send\",\"id\":\"<uuid>\",\"ts\":1730000000000,\"payload\":{\"dialog_id\":\"<dialogId>\",\"text\":\"hello\"}}\n```\n\n**2. Browser console** on any page:\n\n```js\nconst jwt = '<paste accessTokenA>';\nconst ws = new WebSocket('ws://localhost:8083/ws', ['access_token', jwt]);\nws.onmessage = e => console.log(e.data);\nws.onopen = () => ws.send(JSON.stringify({v:1, type:'ping', id:'p-1'}));\n// then:\n// ws.send(JSON.stringify({v:1, type:'message.send', id:crypto.randomUUID(), ts:Date.now(),\n//                         payload:{dialog_id:'<dialogId>', text:'hi'}}))\n```\n\nThe token rides in the subprotocol list rather than the URL, so it stays out of access logs and\nbrowser history. Expect `session.connected` first; a send is answered with `ack` (correlated by\n`client_msg_id` = your envelope id) once the message is persisted — the send travels\ngateway → Kafka `messages.incoming` → message-service → Postgres → Kafka `messages.delivery` →\ngateway. Recipients (including your own other devices) get `message.new`. Failures come back as\n`error` frames whose `ref_id` echoes your envelope id — that is the cue to retry the same id\nover the REST fallback. To watch delivery between two users, open a second socket as user B and\nsend as user A.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -1288,7 +1288,198 @@
       ]
     },
     {
-      "name": "5. Teardown",
+      "name": "5. Notifications (device tokens + offline push)",
+      "description": "Step 2 of the offline-push flow. Register a device token as user B, then send a message to B while B has NO WebSocket open: the gateway publishes a request to the `notifications` topic and notification-service logs `PUSH (stub) -> user=... device=...` — the FCM adapter is stubbed until credentials exist. Watch it in the notification-service console, or inspect the topic in kafka-ui (http://localhost:8082).\n\nThese calls go through the api-gateway; notification-service validates the JWT itself and takes the token owner from its `sub` — you cannot register a device for someone else.",
+      "item": [
+        {
+          "name": "Register device token for B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('token belongs to the device we registered', () =>",
+                  "  pm.expect(json.deviceId).to.eql('postman-device-b'));",
+                  "pm.test('fcm token stored', () => pm.expect(json.fcmToken).to.eql('fake-fcm-token-b'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenB}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"postman-device-b\",\n  \"platform\": \"android\",\n  \"fcmToken\": \"fake-fcm-token-b\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/notification/device-tokens",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notification",
+                "device-tokens"
+              ]
+            },
+            "description": "PUT because re-registering is routine: FCM rotates tokens. Re-run freely — the row is replaced, not duplicated. After this, send a message to B (folder 3) while B has no socket open and watch notification-service log the stubbed push."
+          }
+        },
+        {
+          "name": "Register without a token (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized - the service validates the JWT itself', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"anon-device\",\n  \"platform\": \"android\",\n  \"fcmToken\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/notification/device-tokens",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notification",
+                "device-tokens"
+              ]
+            },
+            "description": "Defence in depth (ARCHITECTURE.md §8.3): even if a caller reached the service around the gateway, no valid JWT means no registration."
+          }
+        },
+        {
+          "name": "Register with bad platform (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('names the offending field', () => pm.expect(pm.response.text()).to.include('platform'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenB}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"postman-device-b\",\n  \"platform\": \"blackberry\",\n  \"fcmToken\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/notification/device-tokens",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notification",
+                "device-tokens"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unregister device token (expect 204)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "// Idempotent: run it twice, the second is still 204."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenB}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/notification/device-tokens/postman-device-b",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notification",
+                "device-tokens",
+                "postman-device-b"
+              ]
+            },
+            "description": "The logout companion: a signed-out device must stop receiving pushes."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Teardown",
       "item": [
         {
           "name": "Logout user A",
