@@ -12,8 +12,19 @@ object KafkaTopics {
     /** Fan-out events after (attempted) persistence. message-service → websocket-gateway. */
     const val MESSAGES_DELIVERY = "messages.delivery"
 
-    /** Push notification requests. Producers various → notification-service / gateway. */
+    /**
+     * Push notification requests for recipients with no live socket (ARCHITECTURE.md §13.2,
+     * §20.1 step 10). websocket-gateway (interim; later any service) → notification-service.
+     * Keyed by recipientId.
+     */
     const val NOTIFICATIONS = "notifications"
+
+    /**
+     * In-app notifications for connected users, pushed as `notification.new` frames.
+     * notification-service → websocket-gateway. The socket-XOR-push decision (§16.2) is what
+     * separates this topic from [NOTIFICATIONS].
+     */
+    const val NOTIFICATIONS_DELIVERY = "notifications.delivery"
 
     /**
      * Call signaling relay. NOTE: ARCHITECTURE.md §17.3 routes signaling around Kafka entirely;

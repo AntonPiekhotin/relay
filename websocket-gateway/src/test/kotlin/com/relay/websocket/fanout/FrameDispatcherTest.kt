@@ -95,7 +95,7 @@ class FrameDispatcherTest {
         val bob = session("bob")
 
         val delivered = dispatcher.deliverToUsersExcept(
-            listOf("alice", "bob"), sender.sessionId, messageFor("d-1")
+            listOf("alice", "bob"), setOf(sender.sessionId), messageFor("d-1")
         )
 
         assertEquals(2, delivered, "the other device and bob, not the sending session")

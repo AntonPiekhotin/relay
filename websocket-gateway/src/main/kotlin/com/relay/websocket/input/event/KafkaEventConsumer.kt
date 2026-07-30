@@ -4,8 +4,11 @@ import com.relay.common.event.CallSignalEvent
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
+import com.relay.common.event.NotificationRequestedEvent
+import com.relay.websocket.output.event.NotificationEventProducer
 import com.relay.websocket.output.socket.FrameDispatcher
 import com.relay.websocket.protocol.OutboundFrame
+import com.relay.websocket.session.SessionRegistry
 import com.relay.websocket.util.EventCodec
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
@@ -21,7 +24,9 @@ import org.springframework.stereotype.Component
 @Component
 class KafkaEventConsumer(
     private val dispatcher: FrameDispatcher,
-    private val codec: EventCodec
+    private val codec: EventCodec,
+    private val registry: SessionRegistry,
+    private val notificationEventProducer: NotificationEventProducer
 ) {
 
     /**
@@ -38,6 +43,7 @@ class KafkaEventConsumer(
                 sendAckToMessageSender(event)
                 if (!event.duplicate) {
                     sendMessageToRecipients(event)
+                    requestNotificationsForOfflineRecipients(event)
                 }
             }
             is MessageDeliveryEvent.Rejected -> handleRejectedMessage(event)
@@ -73,6 +79,25 @@ class KafkaEventConsumer(
         )
     }
 
+    /**
+     * Socket XOR push (ARCHITECTURE.md §16.2): a recipient with no live session gets a push
+     * notification request instead of a frame. The sender is never notified about their own
+     * message, whatever their connection state.
+     *
+     * The online check is this node's in-memory registry — the global truth only while the
+     * gateway runs as a single instance. On multiple nodes each instance would wrongly declare
+     * users on *other* nodes offline; this decision moves into the shared session registry at
+     * the Pattern C migration (recorded follow-up, §23).
+     */
+    private fun requestNotificationsForOfflineRecipients(event: MessageDeliveryEvent.Accepted) {
+        event.recipientIds
+            .distinct()
+            .filter { it != event.senderId && !registry.isOnline(it) }
+            .forEach { recipientId ->
+                notificationEventProducer.publish(NotificationRequestedEvent.messageNew(recipientId, event))
+            }
+    }
+
     private fun handleRejectedMessage(event: MessageDeliveryEvent.Rejected) {
         event.senderSessionId?.let { sessionId ->
             dispatcher.deliverToSession(
@@ -83,9 +108,14 @@ class KafkaEventConsumer(
         }
     }
 
-    @KafkaListener(topics = [KafkaTopics.NOTIFICATIONS])
+    /**
+     * In-app notifications for users notification-service found connected — the other half of
+     * the XOR. The requests topic ([KafkaTopics.NOTIFICATIONS]) flows the opposite way and is
+     * deliberately not consumed here.
+     */
+    @KafkaListener(topics = [KafkaTopics.NOTIFICATIONS_DELIVERY])
     fun onNotification(raw: String) {
-        val event = codec.decode(KafkaTopics.NOTIFICATIONS, raw, NotificationCreatedEvent::class.java)
+        val event = codec.decode(KafkaTopics.NOTIFICATIONS_DELIVERY, raw, NotificationCreatedEvent::class.java)
             ?: return
         dispatcher.deliverToUsers(
             event.recipientIds,

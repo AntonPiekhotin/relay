@@ -4,22 +4,32 @@ import com.relay.common.event.CallSignalEvent
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
+import com.relay.common.event.NotificationRequestedEvent
 import com.relay.common.model.UserPrincipal
 import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.RelaySession
 import com.relay.websocket.session.SessionRegistry
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
+import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import org.apache.kafka.clients.consumer.Consumer
+import org.apache.kafka.clients.consumer.ConsumerConfig
+import org.apache.kafka.common.serialization.StringDeserializer
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry
+import org.springframework.kafka.core.DefaultKafkaConsumerFactory
 import org.springframework.kafka.core.KafkaTemplate
+import org.springframework.kafka.test.EmbeddedKafkaBroker
 import org.springframework.kafka.test.context.EmbeddedKafka
 import org.springframework.kafka.test.utils.ContainerTestUtils
+import org.springframework.kafka.test.utils.KafkaTestUtils
 import reactor.test.StepVerifier
 import tools.jackson.databind.json.JsonMapper
 
@@ -39,7 +49,12 @@ import tools.jackson.databind.json.JsonMapper
 )
 @EmbeddedKafka(
     partitions = 1,
-    topics = [KafkaTopics.MESSAGES_DELIVERY, KafkaTopics.NOTIFICATIONS, KafkaTopics.CALL_SIGNAL]
+    topics = [
+        KafkaTopics.MESSAGES_DELIVERY,
+        KafkaTopics.NOTIFICATIONS,
+        KafkaTopics.NOTIFICATIONS_DELIVERY,
+        KafkaTopics.CALL_SIGNAL
+    ]
 )
 class KafkaEventConsumerIT {
 
@@ -47,13 +62,52 @@ class KafkaEventConsumerIT {
     @Autowired private lateinit var kafkaTemplate: KafkaTemplate<String, String>
     @Autowired private lateinit var jsonMapper: JsonMapper
     @Autowired private lateinit var endpoints: KafkaListenerEndpointRegistry
+    @Autowired private lateinit var broker: EmbeddedKafkaBroker
 
     private val timeout = Duration.ofSeconds(30)
     private var counter = 0
 
+    private lateinit var notificationRequests: Consumer<String, String>
+
     @BeforeTest
     fun waitForPartitionAssignment() {
         endpoints.listenerContainers.forEach { ContainerTestUtils.waitForAssignment(it, 1) }
+    }
+
+    @BeforeTest
+    fun subscribeToNotificationRequests() {
+        val props = KafkaTestUtils.consumerProps(broker, "notif-it-${UUID.randomUUID()}", true)
+            .toMutableMap()
+        props[ConsumerConfig.AUTO_OFFSET_RESET_CONFIG] = "earliest"
+        notificationRequests = DefaultKafkaConsumerFactory(props, StringDeserializer(), StringDeserializer())
+            .createConsumer()
+        notificationRequests.subscribe(listOf(KafkaTopics.NOTIFICATIONS))
+        // Wait for assignment, then skip whatever earlier tests produced on the shared topic —
+        // each test must assert only its own requests.
+        val deadline = System.currentTimeMillis() + 10_000
+        while (notificationRequests.assignment().isEmpty() && System.currentTimeMillis() < deadline) {
+            notificationRequests.poll(Duration.ofMillis(100))
+        }
+        notificationRequests.seekToEnd(notificationRequests.assignment())
+        // seekToEnd is lazy — it resolves on the next poll/position call. Forcing it here,
+        // BEFORE the test publishes, so records produced during the test are not skipped.
+        notificationRequests.assignment().forEach { notificationRequests.position(it) }
+    }
+
+    @AfterTest
+    fun closeConsumer() {
+        notificationRequests.close()
+    }
+
+    /** Keyed records from `notifications`, i.e. what step 2's notification-service will read. */
+    private fun requestedNotifications(): List<Pair<String?, NotificationRequestedEvent>> =
+        KafkaTestUtils.getRecords(notificationRequests, Duration.ofSeconds(10))
+            .records(KafkaTopics.NOTIFICATIONS)
+            .map { it.key() to jsonMapper.readValue(it.value(), NotificationRequestedEvent::class.java) }
+
+    private fun assertNoRequestedNotifications() {
+        val records = KafkaTestUtils.getRecords(notificationRequests, Duration.ofSeconds(2), 1)
+        assertEquals(0, records.count(), "no push may be requested here")
     }
 
     private fun sessionFor(userId: String): RelaySession =
@@ -177,11 +231,73 @@ class KafkaEventConsumerIT {
     }
 
     @Test
+    fun `requests a push for the offline recipient and only for them`() {
+        val alice = sessionFor("alice-xor")
+        // bob-offline-xor has no session; carol is connected.
+        val carol = sessionFor("carol-xor")
+
+        publish(
+            KafkaTopics.MESSAGES_DELIVERY,
+            accepted("alice-xor", alice.sessionId, listOf("alice-xor", "bob-offline-xor", "carol-xor"))
+        )
+
+        // Carol got the frame (socket half of the XOR)...
+        StepVerifier.create(carol.frames)
+            .assertNext { assertIs<OutboundFrame.MessageNew>(it) }
+            .thenCancel()
+            .verify(timeout)
+
+        // ...and exactly one push request exists, for bob, keyed by his id (push half).
+        val requests = requestedNotifications()
+        assertEquals(1, requests.size, "online recipients and the sender must not be pushed")
+        val (key, request) = requests.single()
+        assertEquals("bob-offline-xor", key, "keyed by recipient so step 2 reads per-user in order")
+        assertEquals("bob-offline-xor", request.recipientId)
+        assertEquals(NotificationRequestedEvent.KIND_MESSAGE_NEW, request.kind)
+        assertEquals("hello", request.payload["text"])
+        assertEquals("alice-xor", request.payload["senderId"])
+    }
+
+    @Test
+    fun `an offline sender is never notified about their own message`() {
+        // REST-fallback shape: sender has no socket at all, recipient offline too.
+        publish(
+            KafkaTopics.MESSAGES_DELIVERY,
+            accepted("alice-rest", null, listOf("alice-rest", "bob-rest-offline"))
+        )
+
+        val requests = requestedNotifications()
+        assertEquals(1, requests.size)
+        assertEquals("bob-rest-offline", requests.single().second.recipientId)
+    }
+
+    @Test
+    fun `a duplicate outcome requests no notifications`() {
+        val alice = sessionFor("alice-dup-notif")
+
+        publish(
+            KafkaTopics.MESSAGES_DELIVERY,
+            accepted(
+                "alice-dup-notif", alice.sessionId, listOf("alice-dup-notif", "bob-dup-offline"),
+                clientMessageId = "c-dup-n", duplicate = true
+            )
+        )
+
+        // The ack still arrives...
+        StepVerifier.create(alice.frames)
+            .assertNext { assertIs<OutboundFrame.Ack>(it) }
+            .thenCancel()
+            .verify(timeout)
+        // ...but a retry of an already-delivered message must not buzz anyone's phone again.
+        assertNoRequestedNotifications()
+    }
+
+    @Test
     fun `pushes a notification with its untyped payload intact`() {
         val bob = sessionFor("bob-notification")
 
         publish(
-            KafkaTopics.NOTIFICATIONS,
+            KafkaTopics.NOTIFICATIONS_DELIVERY,
             NotificationCreatedEvent(
                 id = "n-1",
                 kind = "FRIEND_REQUEST",
