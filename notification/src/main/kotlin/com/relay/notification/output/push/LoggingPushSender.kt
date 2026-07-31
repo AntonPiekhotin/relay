@@ -5,21 +5,21 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
 /**
- * Stand-in until FCM credentials exist: logs exactly what would be sent, so the whole pipeline
- * (Kafka -> token lookup -> per-device fan-out) is exercisable locally end to end.
- *
- * When the real FCM adapter lands, mark it `@Primary` (or profile-gate this one) — the
- * consumer depends only on the [PushSender] port.
+ * The default transport when `relay.push.fcm.enabled` is off: logs exactly what would be sent,
+ * so the whole pipeline (Kafka -> token lookup -> per-device fan-out) is exercisable locally
+ * without Firebase credentials. With the flag on, [FcmPushSender] is `@Primary` and this bean
+ * simply stops being injected.
  */
 @Component
 class LoggingPushSender : PushSender {
 
     private val logger = LoggerFactory.getLogger(javaClass)
 
-    override fun send(token: DeviceToken, message: PushMessage) {
+    override fun send(token: DeviceToken, message: PushMessage): PushResult {
         logger.info(
             "PUSH (stub) -> user={} device={} platform={} | {}: {} | data={}",
             token.userId, token.deviceId, token.platform, message.title, message.body, message.data
         )
+        return PushResult.SENT
     }
 }

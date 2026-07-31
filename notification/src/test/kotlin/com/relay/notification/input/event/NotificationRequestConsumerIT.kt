@@ -5,6 +5,7 @@ import com.relay.common.event.NotificationRequestedEvent
 import com.relay.notification.model.DeviceToken
 import com.relay.notification.model.dto.RegisterDeviceTokenRequest
 import com.relay.notification.output.push.PushMessage
+import com.relay.notification.output.push.PushResult
 import com.relay.notification.output.push.PushSender
 import com.relay.notification.service.DeviceTokenService
 import java.time.Instant
@@ -32,6 +33,9 @@ import tools.jackson.databind.json.JsonMapper
 @SpringBootTest(
     properties = [
         "eureka.client.enabled=false",
+        // Force the FCM adapter off regardless of what application.yaml says: tests talk to
+        // the recording double, never to Google.
+        "relay.push.fcm.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:notifdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
@@ -54,8 +58,13 @@ class NotificationRequestConsumerIT {
 
     class RecordingPushSender : PushSender {
         val sent = CopyOnWriteArrayList<Pair<DeviceToken, PushMessage>>()
-        override fun send(token: DeviceToken, message: PushMessage) {
+
+        /** Devices whose next send reports a permanently dead token. */
+        val deadDevices = CopyOnWriteArrayList<String>()
+
+        override fun send(token: DeviceToken, message: PushMessage): PushResult {
             sent += token to message
+            return if (token.deviceId in deadDevices) PushResult.TOKEN_DEAD else PushResult.SENT
         }
     }
 
@@ -67,6 +76,7 @@ class NotificationRequestConsumerIT {
     @BeforeTest
     fun reset() {
         pushSender.sent.clear()
+        pushSender.deadDevices.clear()
     }
 
     private fun publish(request: NotificationRequestedEvent) {
@@ -153,6 +163,35 @@ class NotificationRequestConsumerIT {
             assertEquals(1, pushSender.sent.size)
         }
         assertTrue(pushSender.sent.single().second.data["kind"] == NotificationRequestedEvent.KIND_MESSAGE_NEW)
+    }
+
+    @Test
+    fun `a token FCM declares dead is pruned, the healthy device keeps its pushes`() {
+        register("henry", "henry-old-phone")
+        register("henry", "henry-new-phone")
+        pushSender.deadDevices += "henry-old-phone"
+
+        publish(messageRequest("henry"))
+
+        // Both devices were attempted this time...
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted {
+            assertEquals(2, pushSender.sent.size)
+        }
+        // ...but the dead one is gone from the store, so the next request skips it entirely.
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted {
+            assertEquals(
+                listOf("henry-new-phone"),
+                deviceTokenService.tokensOf("henry").map { it.deviceId },
+                "a token FCM declared UNREGISTERED must be deleted, not retried forever"
+            )
+        }
+
+        pushSender.sent.clear()
+        publish(messageRequest("henry"))
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted {
+            assertEquals(1, pushSender.sent.size)
+        }
+        assertEquals("henry-new-phone", pushSender.sent.single().first.deviceId)
     }
 
     @Test

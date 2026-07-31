@@ -46,3 +46,8 @@ bin/
 .DS_Store
 
 .claude
+### Secrets ###
+*firebase-adminsdk*.json
+*-service-account*.json
+.env
+secrets/

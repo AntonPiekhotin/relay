@@ -37,6 +37,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-kafka")
     implementation("tools.jackson.module:jackson-module-kotlin")
     implementation("com.relay:common:1.0")
+    implementation("com.google.firebase:firebase-admin:9.7.0")
     runtimeOnly("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")

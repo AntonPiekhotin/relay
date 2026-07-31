@@ -31,6 +31,16 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
+relay:
+  push:
+    fcm:
+      # Off by default so the service runs without Firebase credentials (LoggingPushSender).
+      enabled: true
+      credentials-location: ${FCM_CREDENTIALS_LOCATION:file:../secrets/fcm-service-account-credentials.json}
+      # With enabled=true, dry-run=true asks FCM to validate credentials/token/payload without
+      # delivering anything — the smoke test before a client app exists.
+      dry-run: true
+
 eureka:
   instance:
     lease-renewal-interval-in-seconds: 5

@@ -12,15 +12,34 @@ data class PushMessage(
     val data: Map<String, String>
 )
 
+enum class PushResult {
+
+    SENT,
+
+    /**
+     * The token is permanently invalid — app uninstalled, token rotated, or garbage. The caller
+     * must delete it: keeping it means every future message wastes a doomed FCM call, and the
+     * table slowly fills with corpses.
+     */
+    TOKEN_DEAD,
+
+    /**
+     * Transport hiccup (FCM unavailable, quota). Dropping is acceptable: the message is safe in
+     * the database (Principle 1) and the recipient catches up on next open — so no retry
+     * machinery lives here.
+     */
+    TRANSIENT_FAILURE
+}
+
 /**
  * Port for the push transport (ARCHITECTURE.md §16.1). The delivery pipeline is written against
  * this so the FCM integration is a matter of adding an adapter with real credentials — the
  * consumer, token lookup and per-device fan-out do not change.
  *
- * Implementations must not throw for a single undeliverable device: one dead token must not
- * cost the other devices their push.
+ * Implementations must not throw: one undeliverable device must not cost the other devices
+ * their push. Failures are the [PushResult] outcomes.
  */
 interface PushSender {
 
-    fun send(token: DeviceToken, message: PushMessage)
+    fun send(token: DeviceToken, message: PushMessage): PushResult
 }

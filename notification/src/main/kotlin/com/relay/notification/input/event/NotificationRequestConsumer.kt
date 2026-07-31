@@ -4,6 +4,7 @@ import com.relay.common.event.KafkaTopics
 import com.relay.common.event.NotificationRequestedEvent
 import com.relay.notification.model.DeviceToken
 import com.relay.notification.output.push.PushMessage
+import com.relay.notification.output.push.PushResult
 import com.relay.notification.output.push.PushSender
 import com.relay.notification.service.DeviceTokenService
 import org.slf4j.LoggerFactory
@@ -53,7 +54,19 @@ class NotificationRequestConsumer(
     }
 
     private fun sendToDevices(tokens: List<DeviceToken>, message: PushMessage) {
-        tokens.forEach { token -> pushSender.send(token, message) }
+        tokens.forEach { token ->
+            when (pushSender.send(token, message)) {
+                PushResult.SENT -> Unit
+                // Self-healing token store: FCM declared this registration permanently invalid
+                // (app uninstalled, token rotated), so keeping the row would only make every
+                // future message waste a doomed call on it.
+                PushResult.TOKEN_DEAD -> deviceTokenService.unregister(token.userId, token.deviceId)
+                // Dropping is deliberate: the message is safe in the database (Principle 1),
+                // the recipient catches up on next open — no retry machinery here.
+                PushResult.TRANSIENT_FAILURE ->
+                    logger.warn("Push to device {} of user {} failed transiently, dropped", token.deviceId, token.userId)
+            }
+        }
     }
 
     /**
