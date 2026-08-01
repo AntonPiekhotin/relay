@@ -9,6 +9,7 @@ import com.relay.common.exception.RelayException
 import com.relay.common.model.Role
 import com.relay.auth.util.KeycloakProperties
 import com.relay.auth.util.UserCredentials
+import jakarta.ws.rs.WebApplicationException
 import jakarta.ws.rs.core.Response
 import org.keycloak.admin.client.CreatedResponseUtil
 import org.keycloak.admin.client.Keycloak
@@ -56,7 +57,7 @@ class KeycloakService(
         }
         val response = keycloak.realm(props.realm).users().create(user)
         if (response.status != 200 && response.status != 201) {
-            processError(response)
+            processError(response, "create user")
         }
         val userId = CreatedResponseUtil.getCreatedId(response)
         try {
@@ -81,11 +82,17 @@ class KeycloakService(
         )
     }
 
-    private fun processError(response: Response): Nothing {
-        val errorBody = response.readEntity(String::class.java)
-        val errorMap = mapper.readValue(errorBody, Map::class.java) as Map<*, *>
-        val errorMsg = errorMap["errorMessage"] ?: "Unknown error"
-        throw RelayException(response.status, "Failed to create user: $errorMsg")
+    /**
+     * Keycloak reports failures as a JSON body with an `errorMessage`, but not always — a policy
+     * rejection, a proxy error page or an empty body all end up here too, so neither the read nor
+     * the parse may be allowed to mask the real status with a 500.
+     */
+    private fun processError(response: Response, action: String): Nothing {
+        val errorBody = runCatching { response.readEntity(String::class.java) }.getOrNull().orEmpty()
+        val errorMsg = runCatching {
+            (mapper.readValue(errorBody, Map::class.java) as Map<*, *>)["errorMessage"]
+        }.getOrNull() ?: errorBody.ifBlank { "Unknown error" }
+        throw RelayException(response.status, "Failed to $action: $errorMsg")
     }
 
     private fun assignClientRole(
@@ -163,6 +170,31 @@ class KeycloakService(
             }
             .toBodilessEntity()
             .then()
+    }
+
+    /**
+     * Overwrites the credential through the admin API. Blocking, like every admin-client call.
+     *
+     * Keycloak enforces its own realm password policy here (length, history, reuse), which is why a
+     * [WebApplicationException] is unpacked into the status and message it carries instead of
+     * becoming a 500 — the client needs to be told *why* the new password was refused.
+     */
+    fun resetPassword(userId: String, newPassword: String) {
+        try {
+            keycloak.realm(props.realm)
+                .users()
+                .get(userId)
+                .resetPassword(UserCredentials.createPasswordCredentials(newPassword))
+        } catch (ex: WebApplicationException) {
+            processError(ex.response, "change password")
+        } catch (ex: Exception) {
+            throw RelayException(
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                "Failed to change password for user $userId",
+                ex
+            )
+        }
+        logger.debug("Reset password for user {}", userId)
     }
 
     fun deleteUser(userId: String) {

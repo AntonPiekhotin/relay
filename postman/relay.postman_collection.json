@@ -42,6 +42,10 @@
       "type": "string"
     },
     {
+      "key": "newPassword",
+      "value": "Relay!9876"
+    },
+    {
       "key": "emailA",
       "value": "",
       "type": "string"
@@ -95,6 +99,10 @@
       "key": "messageId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "longName",
+      "value": ""
     }
   ],
   "item": [
@@ -637,6 +645,1023 @@
       ]
     },
     {
+      "name": "2.1 Profile, avatar and contacts (through api-gateway)",
+      "description": "The client-facing user surface. The profile is replaced with `PUT` and a complete body — the DTO is the editable projection, deliberately smaller than what `GET /me` returns. Every \"my\" endpoint takes the caller from the JWT's `sub`, never from the path or the body, so there is no request here that can touch somebody else's profile or address book.\n\nContacts are a one-sided address book: adding B does not add A to B's list and does not ask B to accept. Adding twice answers 200 instead of 201 rather than failing, because a retry is not a mistake.\n\n## Avatar upload\n\nPostman cannot carry a binary fixture, so the multipart upload is not in here. With `accessTokenA` from folder 1 (Postman shows it in *Variables*):\n\n```\ncurl -X POST http://localhost:8080/api/v1/user/me/avatar \\\n  -H \"Authorization: Bearer $TOKEN\" \\\n  -F file=@/path/to/photo.png\n```\n\nThe response carries `avatarUrl` — a relative `/api/v1/user/{id}/avatar?v=<millis>`, because the host depends on which edge the client came through. `v` changes whenever the picture does, so caches cannot serve a stale face. The stored content type comes from the file's own signature, not from the `Content-Type` you send: PNG, JPEG, WebP and GIF are accepted, up to 1 MiB, and anything else (an SVG, say, which is a script-bearing document) is refused with 415.",
+      "item": [
+        {
+          "name": "Get my profile (A)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('the profile is the token subject', () =>",
+                  "  pm.expect(json.id).to.eql(pm.collectionVariables.get('userIdA')));",
+                  "pm.test('email matches the registered address', () =>",
+                  "  pm.expect(json.email).to.eql(pm.collectionVariables.get('emailA')));",
+                  "pm.test('no avatar yet', () => pm.expect(json.avatarUrl).to.be.null);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me"
+              ]
+            },
+            "description": "`me` is resolved from the `sub` claim, so this endpoint needs no id and cannot be pointed at another account. The JWT is validated by user-service itself, not only by the gateway (ARCHITECTURE.md §8.3)."
+          }
+        },
+        {
+          "name": "Replace my profile (A)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('firstName replaced', () => pm.expect(json.firstName).to.eql('Alicia'));",
+                  "pm.test('lastName replaced with the same value', () => pm.expect(json.lastName).to.eql('Anderson'));",
+                  "pm.test('email is not part of the projection', () =>",
+                  "  pm.expect(json.email).to.eql(pm.collectionVariables.get('emailA')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Alicia\",\n  \"lastName\": \"Anderson\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me"
+              ]
+            },
+            "description": "PUT replaces the editable projection of the profile — both names, as one. It is narrower than what `GET /me` returns on the same URI: `email` doubles as the Keycloak username, `avatarUrl` is set by uploading a picture, and the password lives in Keycloak (folder 5.1). Sending back a stale value overwrites whatever another of your devices changed in between; two fields wide is the accepted price of an unambiguous verb."
+          }
+        },
+        {
+          "name": "Replace with a whitespace name (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('names the field that failed', () =>",
+                  "  pm.expect(pm.response.json().errorMessage.join()).to.include('firstName'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"   \",\n  \"lastName\": \"Anderson\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me"
+              ]
+            },
+            "description": "`@NotBlank`, not `@Size(min = 1)` — the latter counts three spaces as a valid name, and a profile with a blank name renders as an empty row in every client."
+          }
+        },
+        {
+          "name": "Replace with an over-long name (expect 400)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('longName', 'x'.repeat(200));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('names the field that failed', () =>",
+                  "  pm.expect(pm.response.json().errorMessage.join()).to.include('firstName'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"{{longName}}\",\n  \"lastName\": \"Anderson\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me"
+              ]
+            },
+            "description": "Bean Validation (`@Size(max = 128)`) rejects it before the service is reached."
+          }
+        },
+        {
+          "name": "Replace with a partial body (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "// Both names are required, so a partial body is not a half-applied update."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Alicia\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me"
+              ]
+            },
+            "description": "The properties are non-nullable in Kotlin, so this fails in Jackson before Bean Validation runs — hence a plain 400 rather than a per-field message. This is what PATCH would have accepted, and the reason the verb is PUT: the caller can always tell which fields took effect."
+          }
+        },
+        {
+          "name": "Search for B by full email",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('finds exactly B', () =>",
+                  "  pm.expect(json.items.map(i => i.user.id)).to.eql([pm.collectionVariables.get('userIdB')]));",
+                  "pm.test('not a contact yet', () => pm.expect(json.items[0].contact).to.be.false);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/search?query={{emailB}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "{{emailB}}"
+                }
+              ]
+            },
+            "description": "Email matches only in full. A prefix match would turn this endpoint into an address harvester — 'a', 'b', 'c' would walk the whole user table. Names, by contrast, match by prefix, which is what a type-ahead needs. Each hit carries `contact`, so a client can render Add vs Added without a request per row."
+          }
+        },
+        {
+          "name": "Search by name prefix",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('finds B by their surname prefix, case-insensitively', () =>",
+                  "  pm.expect(pm.response.json().items.map(i => i.user.id))",
+                  "    .to.include(pm.collectionVariables.get('userIdB')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/search?query=bro",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "bro"
+                }
+              ]
+            },
+            "description": "B registered as Bob Brown in folder 1."
+          }
+        },
+        {
+          "name": "Search with a one-character query (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "// Otherwise the endpoint is a way to page through every user two letters at a time."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/search?query=b",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "b"
+                }
+              ]
+            },
+            "description": "A search needs at least two characters."
+          }
+        },
+        {
+          "name": "Search with SQL wildcards (expect no matches)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('wildcards are literal text', () =>",
+                  "  pm.expect(pm.response.json().items).to.be.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/search?query=%25%25",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "%25%25"
+                }
+              ]
+            },
+            "description": "`%%` URL-encoded. Unescaped it would expand to `LIKE '%%%'` and return every user; the query escapes `%`, `_` and the escape character itself."
+          }
+        },
+        {
+          "name": "Add B to my contacts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('the contact is B', () =>",
+                  "  pm.expect(json.user.id).to.eql(pm.collectionVariables.get('userIdB')));",
+                  "pm.test('carries when it was added', () => pm.expect(json.addedAt).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userIdB}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/contacts",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "contacts"
+              ]
+            },
+            "description": "One-sided and immediate: B is not asked to accept and is not added back. The body has no owner field — the owner is the token subject."
+          }
+        },
+        {
+          "name": "Add B again (idempotent, expect 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK, not 409', () => pm.response.to.have.status(200));",
+                  "pm.test('the original row is kept', () =>",
+                  "  pm.expect(pm.response.json().user.id).to.eql(pm.collectionVariables.get('userIdB')));",
+                  "// 201 first time, 200 for a repeat: a retried add is answered, not rejected."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userIdB}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/contacts",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "contacts"
+              ]
+            },
+            "description": "Re-run this folder freely — the composite key means a double add cannot duplicate a row."
+          }
+        },
+        {
+          "name": "Add myself (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userIdA}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/contacts",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "contacts"
+              ]
+            },
+            "description": "You are not a search result for yourself either."
+          }
+        },
+        {
+          "name": "Add an id that is not a user (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "// There is no foreign key behind the composite key, so the service checks explicitly."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"00000000-0000-0000-0000-000000000000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/contacts",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "contacts"
+              ]
+            },
+            "description": "Without this check, contacts could point at ids that were never users."
+          }
+        },
+        {
+          "name": "List my contacts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('exactly one contact', () => pm.expect(json.totalElements).to.eql(1));",
+                  "pm.test('it is B', () =>",
+                  "  pm.expect(json.items[0].user.id).to.eql(pm.collectionVariables.get('userIdB')));",
+                  "pm.test('paging metadata is present', () => {",
+                  "  pm.expect(json.page).to.eql(0);",
+                  "  pm.expect(json.hasNext).to.be.false;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/contacts?page=0&size=20",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "contacts"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Sorted by name, the way an address book is read, not by when each was added. `page` and `size` are clamped rather than rejected: `size=10000` yields 100."
+          }
+        },
+        {
+          "name": "Search for B again - now flagged as a contact",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('contact flag flipped', () =>",
+                  "  pm.expect(pm.response.json().items[0].contact).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/search?query={{emailB}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "{{emailB}}"
+                }
+              ]
+            },
+            "description": "The same search as before, now with B in the caller's contacts."
+          }
+        },
+        {
+          "name": "Contacts are one-sided - B has none",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('A adding B did not add A to B', () =>",
+                  "  pm.expect(pm.response.json().totalElements).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenB}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/contacts",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "contacts"
+              ]
+            },
+            "description": "Same endpoint, B's token — and `me` resolves to B."
+          }
+        },
+        {
+          "name": "Get B's public profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('is B', () => pm.expect(json.id).to.eql(pm.collectionVariables.get('userIdB')));",
+                  "pm.test('a summary, not the full profile', () =>",
+                  "  pm.expect(json.createdAt).to.be.undefined);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/{{userIdB}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "{{userIdB}}"
+              ]
+            },
+            "description": "Looking somebody up by id returns the public subset — what a dialog header needs — so the endpoint cannot be used to mine private fields."
+          }
+        },
+        {
+          "name": "Get my avatar before uploading one (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/{{userIdA}}/avatar",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "{{userIdA}}",
+                "avatar"
+              ]
+            },
+            "description": "Upload one with the curl in this folder's description, then re-run: you get the bytes back with the content type detected from the file itself, `nosniff`, and a private one-day cache."
+          }
+        },
+        {
+          "name": "Delete my avatar (idempotent, expect 204)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "// Clearing a picture nobody set is not an error."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/avatar",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "avatar"
+              ]
+            },
+            "description": "Also clears `avatarUrl` on the profile, so no client keeps rendering a deleted face."
+          }
+        },
+        {
+          "name": "Remove B from my contacts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/contacts/{{userIdB}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "contacts",
+                "{{userIdB}}"
+              ]
+            },
+            "description": "One-sided again: this removes A's edge to B and nothing on B's side."
+          }
+        },
+        {
+          "name": "Remove B again (idempotent, expect 204)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "// Removing somebody you never had is not an error."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/contacts/{{userIdB}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "contacts",
+                "{{userIdB}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "List my contacts after removal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('empty', () => pm.expect(pm.response.json().totalElements).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/user/me/contacts",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "user",
+                "me",
+                "contacts"
+              ]
+            },
+            "description": "Leaves the collection re-runnable from the top."
+          }
+        }
+      ]
+    },
+    {
       "name": "3. Message service (internal)",
       "description": "Dialog membership is resolved server-side and ends up as `recipientIds` on the `messages.delivery` event, which is what the websocket gateway fans out on. A client never names its own recipients.\n\nThe `clientMessageId` requests below are the important ones: they demonstrate that a repeated send is recognised rather than stored twice, which is what makes a client's REST fallback safe after a lost socket acknowledgement.",
       "item": [
@@ -1138,7 +2163,7 @@
                 "me"
               ]
             },
-            "description": "There is no public user endpoint yet, so with a token this would 404 rather than 200. The point here is the 401 without one."
+            "description": "`/api/v1/user/me` is a real endpoint now (folder 2.1), so with a token this returns the caller's profile. The point here is the 401 without one: only `/api/v1/auth/**` is public at the gateway."
           }
         },
         {
@@ -1474,6 +2499,354 @@
               ]
             },
             "description": "The logout companion: a signed-out device must stop receiving pushes."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5.1 Password change (auth + Keycloak)",
+      "description": "Changing a password is an auth concern, not a profile one: Keycloak owns the credential and user-db has no password column. It is the one authenticated endpoint on the auth service — the gateway lets all of `/api/v1/auth/**` through unauthenticated, so auth validates the JWT itself and takes the account from the `sub` claim.\n\nThe current password is required even though the caller already holds a valid token: otherwise a leaked access token would be enough to lock the owner out permanently. It is verified with a password grant, the only way to check a credential through Keycloak's API.\n\nExisting sessions are deliberately left valid, so you are not signed out of the device you just used — which is why the last request here can still authenticate with the token captured before the change.",
+      "item": [
+        {
+          "name": "Change password without a token (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "// The gateway permits /api/v1/auth/**, so this 401 comes from auth itself."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{password}}\",\n  \"newPassword\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/password",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "password"
+              ]
+            },
+            "description": "The one place where the auth service is a resource server rather than an open door."
+          }
+        },
+        {
+          "name": "Change password with the wrong current password (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('says what was wrong without echoing Keycloak internals', () =>",
+                  "  pm.expect(pm.response.json().errorMessage.join()).to.include('Current password'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"Wrong!2345\",\n  \"newPassword\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/password",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "password"
+              ]
+            },
+            "description": "A valid token is not enough; the credential itself has to be proven."
+          }
+        },
+        {
+          "name": "Change password to one that breaks the policy (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('names the offending field', () =>",
+                  "  pm.expect(pm.response.json().errorMessage.join()).to.include('newPassword'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{password}}\",\n  \"newPassword\": \"short\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/password",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "password"
+              ]
+            },
+            "description": "`@PasswordConstraint` (8-256 chars, upper, lower, digit, special) is enforced here — unlike on register, which has no `@Valid` and leaves the rules to Keycloak."
+          }
+        },
+        {
+          "name": "Change my password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "// No tokens in the response: the caller's existing ones stay valid."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{password}}\",\n  \"newPassword\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/password",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "password"
+              ]
+            },
+            "description": "Verified with a password grant, then overwritten through the admin API."
+          }
+        },
+        {
+          "name": "Login with the old password (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{emailA}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Proof the change reached Keycloak and not just our database."
+          }
+        },
+        {
+          "name": "Login with the new password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('accessTokenA', json.access_token);",
+                  "pm.collectionVariables.set('refreshTokenA', json.refresh_token);",
+                  "// Refreshed here so the teardown folder logs out with a live refresh token."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{emailA}}\",\n  \"password\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Re-captures A's tokens under the new credential."
+          }
+        },
+        {
+          "name": "Change it back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "// Leaves the account on {{password}} so a manual re-login works as documented."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{newPassword}}\",\n  \"newPassword\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/auth/password",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "password"
+              ]
+            },
+            "description": "Round trip closed, so the collection can be re-run without editing variables."
           }
         }
       ]

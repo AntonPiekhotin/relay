@@ -4,6 +4,12 @@ server:
 spring:
   application:
     name: auth
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8081/realms/relay-realm
+          jwk-set-uri: http://localhost:8081/realms/relay-realm/protocol/openid-connect/certs
 
 eureka:
   instance:

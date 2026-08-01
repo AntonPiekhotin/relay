@@ -15,6 +15,26 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8081/realms/relay-realm
+          jwk-set-uri: http://localhost:8081/realms/relay-realm/protocol/openid-connect/certs
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
+
+relay:
+  user:
+    avatar:
+      max-size: 1MB
+      allowed-content-types:
+        - image/png
+        - image/jpeg
+        - image/webp
+        - image/gif
 
 eureka:
   instance:

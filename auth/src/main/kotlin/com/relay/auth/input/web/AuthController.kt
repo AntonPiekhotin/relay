@@ -1,12 +1,18 @@
 package com.relay.auth.input.web
 
+import com.relay.auth.dto.ChangePasswordRequest
 import com.relay.auth.dto.LoginRequest
 import com.relay.auth.dto.RefreshRequest
 import com.relay.auth.dto.RegisterRequest
 import com.relay.auth.dto.TokenResponse
 import com.relay.auth.service.AuthService
+import com.relay.auth.util.userId
+import com.relay.auth.util.username
+import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -37,4 +43,17 @@ class AuthController(
     @PostMapping("/logout")
     fun logout(@RequestBody request: RefreshRequest): Mono<Void> =
         authService.logout(request)
+
+    /**
+     * The one authenticated endpoint on this controller: who you are comes from the token, so the
+     * body only carries the two passwords. 204 rather than a token pair — the caller's existing
+     * tokens stay valid, so there is nothing to hand back.
+     */
+    @PostMapping("/password")
+    fun changePassword(
+        @AuthenticationPrincipal jwt: Jwt,
+        @Valid @RequestBody request: ChangePasswordRequest
+    ): Mono<ResponseEntity<Void>> =
+        authService.changePassword(jwt.userId(), jwt.username(), request)
+            .then(Mono.fromCallable { ResponseEntity.noContent().build<Void>() })
 }
