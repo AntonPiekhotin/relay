@@ -1,23 +1,16 @@
 package com.relay.user
 
 import org.junit.jupiter.api.Test
-import org.springframework.boot.test.context.SpringBootTest
 
 /**
- * H2 stands in for Postgres so the suite runs without the compose stack. The JWT decoder is lazy
- * (no JWKS fetch until the first token arrives), so being a resource server does not stop the
- * context from starting offline.
+ * The context starts offline: the JWT decoder is lazy (no JWKS fetch until the first token
+ * arrives), so being a resource server does not stop it, and Eureka is off.
+ *
+ * Sharing [UserServiceIntegrationTest] rather than declaring its own properties is deliberate —
+ * an identical configuration means this reuses the cached context instead of booting a second one
+ * just to assert that booting works.
  */
-@SpringBootTest(
-    properties = [
-        "eureka.client.enabled=false",
-        "spring.datasource.url=jdbc:h2:mem:userctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
-        "spring.datasource.username=sa",
-        "spring.datasource.password=",
-        "spring.jpa.hibernate.ddl-auto=create-drop",
-        "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect"
-    ]
-)
+@UserServiceIntegrationTest
 class UserServiceApplicationTests {
 
     @Test

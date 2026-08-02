@@ -2,6 +2,8 @@ package com.relay.user.service
 
 import com.relay.common.dto.CreateUserRequest
 import com.relay.common.exception.RelayException
+import com.relay.user.PostgresTestcontainerConfig
+import com.relay.user.UserServiceIntegrationTest
 import com.relay.user.repository.ContactRepository
 import com.relay.user.repository.UserAvatarRepository
 import com.relay.user.repository.UserRepository
@@ -13,6 +15,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import org.springframework.mock.web.MockMultipartFile
 
 /**
@@ -20,19 +23,17 @@ import org.springframework.mock.web.MockMultipartFile
  * is decided by the file's signature, not by the `Content-Type` the client chose, because these bytes
  * are served back to browsers from our own origin.
  *
- * `max-size` is turned down to 1 KB so the limit can be exercised without a megabyte fixture.
+ * `max-size` is turned down to 1 KB so the limit can be exercised without a megabyte fixture. That
+ * property is also why this cannot share [UserServiceIntegrationTest]'s set and boots a second
+ * context — against the same container, so the cost is a context and not a second database.
  */
 @SpringBootTest(
     properties = [
         "eureka.client.enabled=false",
-        "relay.user.avatar.max-size=1KB",
-        "spring.datasource.url=jdbc:h2:mem:avatarit;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
-        "spring.datasource.username=sa",
-        "spring.datasource.password=",
-        "spring.jpa.hibernate.ddl-auto=create-drop",
-        "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect"
+        "relay.user.avatar.max-size=1KB"
     ]
 )
+@Import(PostgresTestcontainerConfig::class)
 class AvatarServiceIT {
 
     @Autowired private lateinit var avatarService: AvatarService

@@ -1,6 +1,7 @@
 package com.relay.user.input.web
 
 import com.relay.common.dto.CreateUserRequest
+import com.relay.user.UserServiceIntegrationTest
 import com.relay.user.repository.ContactRepository
 import com.relay.user.repository.UserAvatarRepository
 import com.relay.user.repository.UserRepository
@@ -9,7 +10,6 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt
@@ -24,16 +24,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
  * the only place that exercises "me is the token's `sub`". The service tests below this one call
  * [UserService] directly and so cannot see either.
  */
-@SpringBootTest(
-    properties = [
-        "eureka.client.enabled=false",
-        "spring.datasource.url=jdbc:h2:mem:profileweb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
-        "spring.datasource.username=sa",
-        "spring.datasource.password=",
-        "spring.jpa.hibernate.ddl-auto=create-drop",
-        "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect"
-    ]
-)
+@UserServiceIntegrationTest
 @AutoConfigureMockMvc
 class ProfileWebIT {
 
