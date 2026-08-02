@@ -2,6 +2,9 @@ server:
   port: 8080
 
 spring:
+  threads:
+    virtual:
+      enabled: true
   security:
     oauth2:
       resourceserver:
@@ -14,16 +17,14 @@ spring:
     loadbalancer:
       cache:
         ttl: 5s
-    gateway:
-      server:
-        # spring-cloud-starter-gateway-server-webflux relocated ALL properties under
-        # spring.cloud.gateway.server.webflux.*; the legacy spring.cloud.gateway.* namespace
-        # is silently ignored (ARCHITECTURE.md §6.2). Locator stays off so no service gets an
-        # automatic /{serviceId}/** route — /internal paths must not be reachable from outside.
-        webflux:
-          discovery:
-            locator:
-              enabled: false
+    # Gateway MVC config would live under spring.cloud.gateway.server.webmvc.* — the legacy
+    # spring.cloud.gateway.* namespace is silently ignored rather than rejected, so a misplaced
+    # key routes nothing. Nothing needs setting here today.
+    #
+    # In particular there is no `discovery.locator.enabled: false` any more: unlike the WebFlux
+    # flavour, Gateway MVC ships no discovery route locator at all, so no service ever gets an
+    # automatic /{serviceId}/** route. The routes are exactly the four declared in
+    # ApiGatewayConfig, which keeps /internal paths unreachable from outside by construction.
 
 eureka:
   client:

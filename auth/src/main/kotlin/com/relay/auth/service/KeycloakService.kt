@@ -1,7 +1,7 @@
 package com.relay.auth.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.relay.auth.config.KEYCLOAK_WEB_CLIENT
+import com.relay.auth.config.KEYCLOAK_REST_CLIENT
 import com.relay.auth.dto.LoginRequest
 import com.relay.auth.dto.RegisterRequest
 import com.relay.auth.dto.TokenResponse
@@ -19,10 +19,9 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
-import org.springframework.web.reactive.function.BodyInserters
-import org.springframework.web.reactive.function.client.WebClient
-import org.springframework.web.reactive.function.client.bodyToMono
-import reactor.core.publisher.Mono
+import org.springframework.util.LinkedMultiValueMap
+import org.springframework.util.MultiValueMap
+import org.springframework.web.client.RestClient
 
 private const val GRANT_TYPE = "grant_type"
 private const val PASSWORD = "password"
@@ -38,7 +37,7 @@ class KeycloakService(
     private val keycloak: Keycloak,
     private val props: KeycloakProperties,
     private val mapper: ObjectMapper,
-    @Qualifier(KEYCLOAK_WEB_CLIENT) private val webClient: WebClient
+    @Qualifier(KEYCLOAK_REST_CLIENT) private val restClient: RestClient
 ) {
 
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -89,11 +88,13 @@ class KeycloakService(
      */
     private fun processError(response: Response, action: String): Nothing {
         val errorBody = runCatching { response.readEntity(String::class.java) }.getOrNull().orEmpty()
-        val errorMsg = runCatching {
+        throw RelayException(response.status, "Failed to $action: ${errorMessageIn(errorBody)}")
+    }
+
+    private fun errorMessageIn(errorBody: String): Any =
+        runCatching {
             (mapper.readValue(errorBody, Map::class.java) as Map<*, *>)["errorMessage"]
         }.getOrNull() ?: errorBody.ifBlank { "Unknown error" }
-        throw RelayException(response.status, "Failed to $action: $errorMsg")
-    }
 
     private fun assignClientRole(
         userId: String,
@@ -113,67 +114,76 @@ class KeycloakService(
             .add(listOf(role))
     }
 
-    fun login(request: LoginRequest): Mono<TokenResponse> {
-        return webClient.post()
+    fun login(request: LoginRequest): TokenResponse =
+        requestToken(
+            formData(
+                GRANT_TYPE to PASSWORD,
+                CLIENT_ID to props.clientId,
+                CLIENT_SECRET to props.clientSecret,
+                USERNAME to request.email,
+                PASSWORD to request.password,
+                SCOPE to OPENID
+            ),
+            "Login"
+        )
+
+    fun refresh(refreshToken: String): TokenResponse =
+        requestToken(
+            formData(
+                GRANT_TYPE to REFRESH_TOKEN,
+                CLIENT_ID to props.clientId,
+                CLIENT_SECRET to props.clientSecret,
+                REFRESH_TOKEN to refreshToken
+            ),
+            "Refresh"
+        )
+
+    private fun requestToken(body: MultiValueMap<String, String>, action: String): TokenResponse =
+        restClient.post()
             .uri(tokenUrl)
             .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-            .body(
-                BodyInserters.fromFormData(GRANT_TYPE, PASSWORD)
-                    .with(CLIENT_ID, props.clientId)
-                    .with(CLIENT_SECRET, props.clientSecret)
-                    .with(USERNAME, request.email)
-                    .with(PASSWORD, request.password)
-                    .with(SCOPE, OPENID)
-            )
+            .body(body)
             .retrieve()
-            .onStatus({ it.isError }) { response ->
-                response.bodyToMono<String>().flatMap { errorBody ->
-                    Mono.error(RelayException(response.statusCode().value(), "Login failed: $errorBody"))
-                }
-            }
-            .bodyToMono<TokenResponse>()
-    }
-
-    fun refresh(refreshToken: String): Mono<TokenResponse> {
-        return webClient.post()
-            .uri(tokenUrl)
-            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-            .body(
-                BodyInserters.fromFormData(GRANT_TYPE, REFRESH_TOKEN)
-                    .with(CLIENT_ID, props.clientId)
-                    .with(CLIENT_SECRET, props.clientSecret)
-                    .with(REFRESH_TOKEN, refreshToken)
+            .onStatus({ it.isError }) { _, response -> tokenEndpointFailed(response, action) }
+            .body(TokenResponse::class.java)
+            ?: throw RelayException(
+                HttpStatus.BAD_GATEWAY.value(),
+                "$action failed: Keycloak returned an empty token response"
             )
-            .retrieve()
-            .onStatus({ it.isError }) { response ->
-                response.bodyToMono<String>().flatMap { errorBody ->
-                    Mono.error(RelayException(response.statusCode().value(), "Refresh failed: $errorBody"))
-                }
-            }
-            .bodyToMono<TokenResponse>()
-    }
 
-    fun logout(refreshToken: String): Mono<Void> {
-        return webClient.post()
+    fun logout(refreshToken: String) {
+        restClient.post()
             .uri(logoutUrl)
             .contentType(MediaType.APPLICATION_FORM_URLENCODED)
             .body(
-                BodyInserters.fromFormData(CLIENT_ID, props.clientId)
-                    .with(CLIENT_SECRET, props.clientSecret)
-                    .with(REFRESH_TOKEN, refreshToken)
+                formData(
+                    CLIENT_ID to props.clientId,
+                    CLIENT_SECRET to props.clientSecret,
+                    REFRESH_TOKEN to refreshToken
+                )
             )
             .retrieve()
-            .onStatus({ it.isError }) { response ->
-                response.bodyToMono<String>().flatMap { errorBody ->
-                    Mono.error(RelayException(response.statusCode().value(), "Logout failed: $errorBody"))
-                }
-            }
+            .onStatus({ it.isError }) { _, response -> tokenEndpointFailed(response, "Logout") }
             .toBodilessEntity()
-            .then()
     }
 
+    private fun tokenEndpointFailed(
+        response: org.springframework.http.client.ClientHttpResponse,
+        action: String
+    ): Nothing {
+        val errorBody = runCatching { response.body.readAllBytes().decodeToString() }.getOrNull().orEmpty()
+        throw RelayException(response.statusCode.value(), "$action failed: $errorBody")
+    }
+
+    private fun formData(vararg pairs: Pair<String, String>): MultiValueMap<String, String> =
+        LinkedMultiValueMap<String, String>().apply {
+            pairs.forEach { (name, value) -> add(name, value) }
+        }
+
     /**
-     * Overwrites the credential through the admin API. Blocking, like every admin-client call.
+     * Overwrites the credential through the admin API. Blocking, like every admin-client call —
+     * which is now simply a blocking call on a virtual thread rather than something that has to be
+     * pushed onto a separate scheduler.
      *
      * Keycloak enforces its own realm password policy here (length, history, reuse), which is why a
      * [WebApplicationException] is unpacked into the status and message it carries instead of

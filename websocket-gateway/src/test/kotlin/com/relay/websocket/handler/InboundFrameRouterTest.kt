@@ -22,7 +22,6 @@ import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.kafka.support.SendResult
-import reactor.test.StepVerifier
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.module.kotlin.KotlinModule
 
@@ -41,6 +40,10 @@ class InboundFrameRouterTest {
     private fun session(userId: String = "alice") =
         RelaySession("s-1", UserPrincipal(userId, null, emptySet()), 16)
 
+    /** Stands in for the writer thread; the frame is already queued, so this does not park. */
+    private fun RelaySession.nextFrame(): OutboundFrame =
+        assertIs<RelaySession.Outbound.Frame>(awaitOutbound()).frame
+
     private fun queueSucceeds() {
         `when`(kafkaTemplate.send(anyString(), anyString(), anyString()))
             .thenReturn(CompletableFuture.completedFuture(null as SendResult<String, String>?))
@@ -50,12 +53,9 @@ class InboundFrameRouterTest {
     fun `answers a ping with a pong echoing the frame id`() {
         val session = session()
 
-        router.route(session, """{"v":1,"type":"ping","id":"p-7"}""").block()
+        router.route(session, """{"v":1,"type":"ping","id":"p-7"}""")
 
-        StepVerifier.create(session.frames)
-            .assertNext { assertEquals("p-7", assertIs<OutboundFrame.Pong>(it).refId) }
-            .thenCancel()
-            .verify()
+        assertEquals("p-7", assertIs<OutboundFrame.Pong>(session.nextFrame()).refId)
     }
 
     @Test
@@ -68,7 +68,7 @@ class InboundFrameRouterTest {
             session,
             """{"v":1,"type":"message.send","id":"c-1",
                 "payload":{"dialog_id":"d-1","text":"hello","sender_id":"mallory"}}"""
-        ).block()
+        )
 
         val value = ArgumentCaptor.forClass(String::class.java)
         verify(kafkaTemplate).send(eq(KafkaTopics.MESSAGES_INCOMING), eq("d-1"), value.capture())
@@ -86,10 +86,12 @@ class InboundFrameRouterTest {
         router.route(
             session,
             """{"v":1,"type":"message.send","id":"c-1","payload":{"dialog_id":"d-1","text":"hello"}}"""
-        ).block()
+        )
 
+        // Completing puts the terminal marker at the head, so it arriving first proves nothing
+        // was queued ahead of it.
         session.complete()
-        StepVerifier.create(session.frames).verifyComplete()
+        assertEquals(RelaySession.Outbound.Completed, session.awaitOutbound())
     }
 
     @Test
@@ -101,28 +103,20 @@ class InboundFrameRouterTest {
         router.route(
             session,
             """{"v":1,"type":"message.send","id":"c-1","payload":{"dialog_id":"d-1","text":"hello"}}"""
-        ).block()
+        )
 
-        StepVerifier.create(session.frames)
-            .assertNext {
-                val error = assertIs<OutboundFrame.Error>(it)
-                assertEquals(ErrorCodes.SEND_FAILED, error.code)
-                assertEquals("c-1", error.refId, "the client retries exactly this send over REST")
-            }
-            .thenCancel()
-            .verify()
+        val error = assertIs<OutboundFrame.Error>(session.nextFrame())
+        assertEquals(ErrorCodes.SEND_FAILED, error.code)
+        assertEquals("c-1", error.refId, "the client retries exactly this send over REST")
     }
 
     @Test
     fun `an unparseable frame gets BAD_FRAME and nothing reaches the queue`() {
         val session = session()
 
-        router.route(session, "not json at all").block()
+        router.route(session, "not json at all")
 
-        StepVerifier.create(session.frames)
-            .assertNext { assertEquals(ErrorCodes.BAD_FRAME, assertIs<OutboundFrame.Error>(it).code) }
-            .thenCancel()
-            .verify()
+        assertEquals(ErrorCodes.BAD_FRAME, assertIs<OutboundFrame.Error>(session.nextFrame()).code)
         verify(kafkaTemplate, never()).send(anyString(), anyString(), anyString())
     }
 
@@ -130,12 +124,12 @@ class InboundFrameRouterTest {
     fun `a wrong protocol version is refused without touching the queue`() {
         val session = session()
 
-        router.route(session, """{"v":99,"type":"message.send","id":"c-1","payload":{"dialog_id":"d","text":"x"}}""").block()
+        router.route(session, """{"v":99,"type":"message.send","id":"c-1","payload":{"dialog_id":"d","text":"x"}}""")
 
-        StepVerifier.create(session.frames)
-            .assertNext { assertEquals(ErrorCodes.UNSUPPORTED_VERSION, assertIs<OutboundFrame.Error>(it).code) }
-            .thenCancel()
-            .verify()
+        assertEquals(
+            ErrorCodes.UNSUPPORTED_VERSION,
+            assertIs<OutboundFrame.Error>(session.nextFrame()).code
+        )
         verify(kafkaTemplate, never()).send(anyString(), anyString(), anyString())
     }
 }

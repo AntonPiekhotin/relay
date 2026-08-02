@@ -10,7 +10,6 @@ import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.RelaySession
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
-import reactor.core.publisher.Mono
 
 /**
  * Dispatches one inbound frame. Sends are handed to [MessageEventProducer] and the ack arrives
@@ -27,19 +26,16 @@ class InboundFrameRouter(
 
     private val logger = LoggerFactory.getLogger(javaClass)
 
-    fun route(session: RelaySession, raw: String): Mono<Void> {
+    fun route(session: RelaySession, raw: String) {
         val frame = try {
             codec.decode(raw)
         } catch (ex: FrameDecodeException) {
             logger.debug("Rejected frame from session {}: {}", session.sessionId, ex.message)
             session.send(OutboundFrame.Error(ex.code, ex.message, ex.refId))
-            return Mono.empty()
+            return
         }
-        return when (frame) {
-            is InboundFrame.Ping -> {
-                session.send(OutboundFrame.Pong(frame.id))
-                Mono.empty()
-            }
+        when (frame) {
+            is InboundFrame.Ping -> session.send(OutboundFrame.Pong(frame.id))
             is InboundFrame.MessageSend -> send(session, frame)
         }
     }
@@ -48,7 +44,7 @@ class InboundFrameRouter(
      * Only a failed hand-off produces an immediate error frame — that is the client's cue to
      * retry the same id over REST.
      */
-    private fun send(session: RelaySession, frame: InboundFrame.MessageSend): Mono<Void> {
+    private fun send(session: RelaySession, frame: InboundFrame.MessageSend) {
         val command = SendMessageCommand(
             clientMessageId = frame.id,
             dialogId = frame.dialogId,
@@ -64,6 +60,5 @@ class InboundFrameRouter(
                 )
             }
         }
-        return Mono.empty()
     }
 }

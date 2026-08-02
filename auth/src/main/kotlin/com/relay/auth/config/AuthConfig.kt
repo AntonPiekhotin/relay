@@ -6,9 +6,9 @@ import org.keycloak.admin.client.Keycloak
 import org.keycloak.admin.client.KeycloakBuilder
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.client.RestClient
 
-const val KEYCLOAK_WEB_CLIENT = "keycloakWebClient"
+const val KEYCLOAK_REST_CLIENT = "keycloakRestClient"
 
 @Configuration
 class KeycloakConfig(
@@ -26,9 +26,9 @@ class KeycloakConfig(
             .build()
     }
 
-    @Bean(KEYCLOAK_WEB_CLIENT)
-    fun webClient(): WebClient =
-        WebClient.builder()
+    @Bean(KEYCLOAK_REST_CLIENT)
+    fun keycloakRestClient(): RestClient =
+        RestClient.builder()
             .baseUrl(props.url)
             .build()
 }

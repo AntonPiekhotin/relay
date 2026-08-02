@@ -3,14 +3,14 @@ package com.relay.auth.config
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.http.HttpMethod
-import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
-import org.springframework.security.config.web.server.ServerHttpSecurity
-import org.springframework.security.core.userdetails.MapReactiveUserDetailsService
-import org.springframework.security.core.userdetails.ReactiveUserDetailsService
-import org.springframework.security.web.server.SecurityWebFilterChain
+import org.springframework.security.config.annotation.web.builders.HttpSecurity
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
+import org.springframework.security.core.userdetails.UserDetailsService
+import org.springframework.security.provisioning.InMemoryUserDetailsManager
+import org.springframework.security.web.SecurityFilterChain
 
 @Configuration
-@EnableWebFluxSecurity
+@EnableWebSecurity
 class AuthSecurityConfig {
 
     /**
@@ -20,22 +20,22 @@ class AuthSecurityConfig {
      * which is also where the endpoint learns whose password to change.
      */
     @Bean
-    fun chain(http: ServerHttpSecurity): SecurityWebFilterChain =
+    fun chain(http: HttpSecurity): SecurityFilterChain =
         http
             .csrf { it.disable() }
             .httpBasic { it.disable() }
             .formLogin { it.disable() }
-            .authorizeExchange { exchange ->
-                exchange
-                    .pathMatchers(HttpMethod.POST, "/api/v1/auth/password").authenticated()
-                    .pathMatchers("/api/v1/auth/**").permitAll()
-                    .anyExchange().authenticated()
+            .authorizeHttpRequests { requests ->
+                requests
+                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/password").authenticated()
+                    .requestMatchers("/api/v1/auth/**").permitAll()
+                    .anyRequest().authenticated()
             }
             .oauth2ResourceServer { oauth2 -> oauth2.jwt { } }
             .build()
 
+    /** Empty on purpose: this service authenticates by JWT only, and without a bean here Boot
+     *  would auto-configure a default user with a generated password. */
     @Bean
-    fun noUserDetails(): ReactiveUserDetailsService {
-        return MapReactiveUserDetailsService(emptyMap())
-    }
+    fun noUserDetails(): UserDetailsService = InMemoryUserDetailsManager()
 }

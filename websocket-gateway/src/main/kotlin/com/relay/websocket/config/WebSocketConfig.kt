@@ -2,28 +2,24 @@ package com.relay.websocket.config
 
 import com.relay.websocket.input.handler.RelayWebSocketHandler
 import com.relay.websocket.util.WebSocketProperties
-import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.core.Ordered
-import org.springframework.web.reactive.HandlerMapping
-import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping
-import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter
+import org.springframework.web.socket.config.annotation.EnableWebSocket
+import org.springframework.web.socket.config.annotation.WebSocketConfigurer
+import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 
+/**
+ * Maps the handler onto the configured path. The subprotocol the server confirms comes from
+ * [RelayWebSocketHandler] implementing [org.springframework.web.socket.SubProtocolCapable], which
+ * the handshake handler reads to negotiate `access_token`.
+ */
 @Configuration
-class WebSocketConfig {
+@EnableWebSocket
+class WebSocketConfig(
+    private val handler: RelayWebSocketHandler,
+    private val props: WebSocketProperties
+) : WebSocketConfigurer {
 
-    @Bean
-    fun webSocketHandlerMapping(
-        handler: RelayWebSocketHandler,
-        props: WebSocketProperties
-    ): HandlerMapping =
-        SimpleUrlHandlerMapping(mapOf(props.path to handler), Ordered.HIGHEST_PRECEDENCE)
-
-    /**
-     * Boot 4.1 has no WebSocket auto-configuration for WebFlux, so the adapter that turns a
-     * matched [org.springframework.web.reactive.socket.WebSocketHandler] into an upgrade must be
-     * declared explicitly.
-     */
-    @Bean
-    fun webSocketHandlerAdapter(): WebSocketHandlerAdapter = WebSocketHandlerAdapter()
+    override fun registerWebSocketHandlers(registry: WebSocketHandlerRegistry) {
+        registry.addHandler(handler, props.path)
+    }
 }

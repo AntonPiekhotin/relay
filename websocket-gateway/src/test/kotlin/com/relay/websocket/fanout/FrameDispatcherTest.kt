@@ -4,13 +4,12 @@ import com.relay.common.model.UserPrincipal
 import com.relay.websocket.output.socket.FrameDispatcher
 import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.InMemorySessionRegistry
-import com.relay.websocket.session.OutboundOverflowException
 import com.relay.websocket.session.RelaySession
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
-import reactor.test.StepVerifier
 
 class FrameDispatcherTest {
 
@@ -22,6 +21,13 @@ class FrameDispatcherTest {
     private fun session(userId: String, bufferSize: Int = 16): RelaySession =
         RelaySession("s-${counter++}", UserPrincipal(userId, null, emptySet()), bufferSize)
             .also(registry::register)
+
+    /**
+     * The queue already holds whatever was dispatched, so this never actually parks — it just
+     * takes the writer thread's place in these tests.
+     */
+    private fun RelaySession.nextFrame(): OutboundFrame =
+        assertIs<RelaySession.Outbound.Frame>(awaitOutbound()).frame
 
     private fun messageFor(dialogId: String) = OutboundFrame.MessageNew(
         messageId = "m-1",
@@ -41,10 +47,7 @@ class FrameDispatcherTest {
 
         assertEquals(3, delivered, "both of bob's sockets plus carol's")
         listOf(bobPhone, bobWeb, carol).forEach { session ->
-            StepVerifier.create(session.frames)
-                .assertNext { assertEquals("d-1", (it as OutboundFrame.MessageNew).dialogId) }
-                .thenCancel()
-                .verify()
+            assertEquals("d-1", assertIs<OutboundFrame.MessageNew>(session.nextFrame()).dialogId)
         }
     }
 
@@ -72,13 +75,10 @@ class FrameDispatcherTest {
         val ack = OutboundFrame.Ack("c-1", "m-1", Instant.parse("2026-07-26T10:00:00Z"))
         assertTrue(dispatcher.deliverToSession("bob", phone.sessionId, ack))
 
-        StepVerifier.create(phone.frames)
-            .assertNext { assertEquals("c-1", (it as OutboundFrame.Ack).clientMsgId) }
-            .thenCancel()
-            .verify()
-        // The other device saw nothing.
+        assertEquals("c-1", assertIs<OutboundFrame.Ack>(phone.nextFrame()).clientMsgId)
+        // The other device saw nothing: completing it puts the terminal marker at the head.
         web.complete()
-        StepVerifier.create(web.frames).verifyComplete()
+        assertEquals(RelaySession.Outbound.Completed, web.awaitOutbound())
     }
 
     @Test
@@ -100,9 +100,9 @@ class FrameDispatcherTest {
 
         assertEquals(2, delivered, "the other device and bob, not the sending session")
         sender.complete()
-        StepVerifier.create(sender.frames).verifyComplete()
-        StepVerifier.create(otherDevice.frames).expectNextCount(1).thenCancel().verify()
-        StepVerifier.create(bob.frames).expectNextCount(1).thenCancel().verify()
+        assertEquals(RelaySession.Outbound.Completed, sender.awaitOutbound())
+        assertIs<OutboundFrame.MessageNew>(otherDevice.nextFrame())
+        assertIs<OutboundFrame.MessageNew>(bob.nextFrame())
     }
 
     @Test
@@ -112,10 +112,9 @@ class FrameDispatcherTest {
         assertEquals(1, dispatcher.deliverToUsers(listOf("bob"), messageFor("d-1")))
         assertEquals(0, dispatcher.deliverToUsers(listOf("bob"), messageFor("d-2")), "buffer is full")
 
-        StepVerifier.create(slow.frames)
-            .assertNext { assertEquals("d-1", (it as OutboundFrame.MessageNew).dialogId) }
-            .expectError(OutboundOverflowException::class.java)
-            .verify()
+        // Already-buffered frames are still handed over before the overload marker ends the stream.
+        assertEquals("d-1", assertIs<OutboundFrame.MessageNew>(slow.nextFrame()).dialogId)
+        assertEquals(RelaySession.Outbound.Overloaded, slow.awaitOutbound())
     }
 
     @Test

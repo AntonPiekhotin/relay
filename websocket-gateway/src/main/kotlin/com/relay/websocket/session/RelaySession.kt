@@ -2,63 +2,96 @@ package com.relay.websocket.session
 
 import com.relay.common.model.UserPrincipal
 import com.relay.websocket.protocol.OutboundFrame
-import reactor.core.publisher.Flux
-import reactor.core.publisher.Sinks
-import reactor.util.concurrent.Queues
-
-/** Raised into the outbound stream when a client stops keeping up, which closes its socket. */
-class OutboundOverflowException(sessionId: String) :
-    RuntimeException("Session $sessionId fell behind its outbound buffer")
-
-/** How long to spin when another thread is mid-emission on the same sink. */
-private const val SERIALIZATION_RETRIES = 64
+import java.time.Duration
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * One live WebSocket connection. A user may hold several at once (phone plus web), so sessions
  * are identified separately from users.
  *
- * Outbound frames go through a bounded sink: the buffer absorbs bursts, and overflow is reported
- * to the caller instead of growing without limit.
+ * Outbound frames go through a bounded queue drained by a single writer thread: the buffer
+ * absorbs bursts, overflow is reported to the caller instead of growing without limit, and the
+ * one-writer rule is what makes it safe to hand a [org.springframework.web.socket.WebSocketSession]
+ * — which does not tolerate concurrent sends — to fan-out running on many Kafka listener threads.
  */
 class RelaySession(
     val sessionId: String,
     val principal: UserPrincipal,
-    outboundBufferSize: Int
+    private val outboundBufferSize: Int
 ) {
 
-    private val sink: Sinks.Many<OutboundFrame> =
-        Sinks.many().unicast().onBackpressureBuffer(Queues.get<OutboundFrame>(outboundBufferSize).get())
+    /** What the writer thread pulls off the queue: either a frame to send, or a reason to stop. */
+    sealed interface Outbound {
+        data class Frame(val frame: OutboundFrame) : Outbound
+
+        /** Graceful end: flush what is already queued, then close normally. */
+        data object Completed : Outbound
+
+        /** The client fell behind: flush what is queued, then close with an overload status. */
+        data object Overloaded : Outbound
+    }
+
+    // One slot beyond the advertised buffer is reserved for the terminal marker, so a session can
+    // always be torn down even when its buffer is completely full.
+    private val outbound = ArrayBlockingQueue<Outbound>(outboundBufferSize + 1)
+    private val buffered = AtomicInteger(0)
+    private val ending = AtomicBoolean(false)
 
     val userId: String get() = principal.userId
 
-    val frames: Flux<OutboundFrame> = sink.asFlux()
-
     /**
-     * Returns false when the buffer is full or the sink is already terminated, i.e. the client is
+     * Returns false when the buffer is full or the session is already ending, i.e. the client is
      * not keeping up and its socket should be closed.
      *
-     * Fan-out runs on several Kafka listener threads, so two frames can race for one session.
-     * Sinks report that as FAIL_NON_SERIALIZED rather than corrupting state, and the documented
-     * response is to retry — treating it as a failure would silently drop deliverable frames.
+     * Fan-out runs on several Kafka listener threads, so two frames can race for one session. The
+     * slot is claimed with a CAS before the frame is queued, which keeps the reserved terminal slot
+     * out of reach of ordinary sends no matter how the racers interleave.
      */
     fun send(frame: OutboundFrame): Boolean {
-        repeat(SERIALIZATION_RETRIES) {
-            when (sink.tryEmitNext(frame)) {
-                Sinks.EmitResult.OK -> return true
-                Sinks.EmitResult.FAIL_NON_SERIALIZED -> Thread.onSpinWait()
-                else -> return false
-            }
+        if (ending.get()) return false
+        while (true) {
+            val claimed = buffered.get()
+            if (claimed >= outboundBufferSize) return false
+            if (buffered.compareAndSet(claimed, claimed + 1)) break
         }
-        return false
+        if (!outbound.offer(Outbound.Frame(frame))) {
+            buffered.decrementAndGet()
+            return false
+        }
+        return true
     }
 
-    /** Ends the outbound stream so the handler's `send` completes and the socket closes. */
+    /**
+     * Blocks the writer thread until there is something to do. Never blocks forever on a live
+     * session: every termination path enqueues a marker, which is what wakes a parked writer.
+     */
+    fun awaitOutbound(): Outbound = outbound.take().also(::released)
+
+    /** Bounded variant for callers that must not park indefinitely. Null when nothing arrived. */
+    fun awaitOutbound(timeout: Duration): Outbound? =
+        outbound.poll(timeout.toMillis(), TimeUnit.MILLISECONDS)?.also(::released)
+
+    private fun released(taken: Outbound) {
+        if (taken is Outbound.Frame) buffered.decrementAndGet()
+    }
+
+    /** Ends the outbound stream so the writer drains the buffer and closes the socket. */
     fun complete() {
-        sink.tryEmitComplete()
+        if (ending.compareAndSet(false, true)) {
+            outbound.put(Outbound.Completed)
+        }
     }
 
-    /** Fails the outbound stream, which closes the socket with an overload status. */
+    /**
+     * Ends the outbound stream with an overload status. Already-buffered frames are still handed
+     * to the writer first, matching what the reactive sink did on `tryEmitError`.
+     */
     fun terminateOverloaded() {
-        sink.tryEmitError(OutboundOverflowException(sessionId))
+        if (ending.compareAndSet(false, true)) {
+            outbound.put(Outbound.Overloaded)
+        }
     }
 }

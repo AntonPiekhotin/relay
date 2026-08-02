@@ -3,23 +3,27 @@ package com.relay.apigateway.config
 
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
-import org.springframework.security.config.web.server.ServerHttpSecurity
-import org.springframework.security.web.server.SecurityWebFilterChain
+import org.springframework.security.config.annotation.web.builders.HttpSecurity
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
+import org.springframework.security.web.SecurityFilterChain
 
 @Configuration
-@EnableWebFluxSecurity
+@EnableWebSecurity
 class SecurityConfig {
 
+    /**
+     * Not named `springSecurityFilterChain`: on the servlet stack that name is already taken by the
+     * `FilterChainProxy` that `WebSecurityConfiguration` registers, and reusing it fails the context.
+     */
     @Bean
-    fun springSecurityFilterChain(http: ServerHttpSecurity): SecurityWebFilterChain {
+    fun gatewaySecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
         return http
             .csrf { it.disable() }
-            .authorizeExchange { exchanges ->
-                exchanges
-                    .pathMatchers("/actuator/**").permitAll()
-                    .pathMatchers("/api/v1/auth/**").permitAll()
-                    .anyExchange().authenticated()
+            .authorizeHttpRequests { requests ->
+                requests
+                    .requestMatchers("/actuator/**").permitAll()
+                    .requestMatchers("/api/v1/auth/**").permitAll()
+                    .anyRequest().authenticated()
             }
             .oauth2ResourceServer { oauth2 -> oauth2.jwt { } }
             .build()

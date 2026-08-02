@@ -1,28 +1,27 @@
 package com.relay.websocket.security
 
 import com.relay.websocket.protocol.ACCESS_TOKEN_PROTOCOL
-import org.springframework.security.core.Authentication
-import org.springframework.security.oauth2.server.resource.authentication.BearerTokenAuthenticationToken
-import org.springframework.security.web.server.authentication.ServerAuthenticationConverter
-import org.springframework.web.server.ServerWebExchange
-import reactor.core.publisher.Mono
+import jakarta.servlet.http.HttpServletRequest
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver
 
 private const val SEC_WEBSOCKET_PROTOCOL = "Sec-WebSocket-Protocol"
 
 /**
  * Browsers cannot set headers on a WebSocket handshake, so the token rides in the subprotocol
- * list as `access_token, <jwt>`. Returning empty leaves the exchange unauthenticated, which the
- * authorization rules then reject with a 401 before the upgrade happens.
+ * list as `access_token, <jwt>`.
+ *
+ * Plugging this into the resource server as a [BearerTokenResolver] rather than hand-rolling an
+ * authentication filter means the stock `BearerTokenAuthenticationFilter` does the work: a bad
+ * token is rejected with a 401 before the upgrade, instead of opening a socket only to close it
+ * again. Returning null leaves the request unauthenticated, which the authorization rules then
+ * reject the same way.
  */
-class SubProtocolTokenConverter : ServerAuthenticationConverter {
+class SubProtocolTokenConverter : BearerTokenResolver {
 
-    override fun convert(exchange: ServerWebExchange): Mono<Authentication> =
-        Mono.justOrEmpty(extractToken(exchange))
-            .map { BearerTokenAuthenticationToken(it) }
-
-    private fun extractToken(exchange: ServerWebExchange): String? {
+    override fun resolve(request: HttpServletRequest): String? {
         // The header may arrive as one comma-joined value or as repeated headers.
-        val requested = exchange.request.headers[SEC_WEBSOCKET_PROTOCOL]
+        val requested = request.getHeaders(SEC_WEBSOCKET_PROTOCOL)
+            ?.toList()
             ?.flatMap { it.split(",") }
             ?.map(String::trim)
             ?.filter(String::isNotEmpty)

@@ -18,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import org.apache.kafka.clients.consumer.Consumer
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.StringDeserializer
@@ -30,7 +31,6 @@ import org.springframework.kafka.test.EmbeddedKafkaBroker
 import org.springframework.kafka.test.context.EmbeddedKafka
 import org.springframework.kafka.test.utils.ContainerTestUtils
 import org.springframework.kafka.test.utils.KafkaTestUtils
-import reactor.test.StepVerifier
 import tools.jackson.databind.json.JsonMapper
 
 /**
@@ -114,6 +114,15 @@ class KafkaEventConsumerIT {
         RelaySession("s-$userId-${counter++}", UserPrincipal(userId, null, emptySet()), 32)
             .also(registry::register)
 
+    /**
+     * Stands in for the writer thread. Bounded because the frame is produced asynchronously by a
+     * Kafka listener — an unbounded take would hang the suite instead of failing it.
+     */
+    private fun RelaySession.nextFrame(): OutboundFrame {
+        val next = awaitOutbound(timeout) ?: fail("no frame reached session $sessionId within $timeout")
+        return assertIs<RelaySession.Outbound.Frame>(next).frame
+    }
+
     private fun publish(topic: String, event: Any) {
         kafkaTemplate.send(topic, jsonMapper.writeValueAsString(event)).get()
     }
@@ -146,23 +155,17 @@ class KafkaEventConsumerIT {
             accepted("alice-ack", alice.sessionId, listOf("alice-ack", "bob-ack"))
         )
 
-        StepVerifier.create(alice.frames)
-            .assertNext { frame ->
-                val ack = assertIs<OutboundFrame.Ack>(frame)
-                assertEquals("c-1", ack.clientMsgId)
-                assertEquals("m-c-1", ack.messageId)
-            }
-            .thenCancel()
-            .verify(timeout)
+        alice.nextFrame().let { frame ->
+            val ack = assertIs<OutboundFrame.Ack>(frame)
+            assertEquals("c-1", ack.clientMsgId)
+            assertEquals("m-c-1", ack.messageId)
+        }
 
-        StepVerifier.create(bob.frames)
-            .assertNext { frame ->
-                val message = assertIs<OutboundFrame.MessageNew>(frame)
-                assertEquals("hello", message.text)
-                assertEquals("alice-ack", message.senderId)
-            }
-            .thenCancel()
-            .verify(timeout)
+        bob.nextFrame().let { frame ->
+            val message = assertIs<OutboundFrame.MessageNew>(frame)
+            assertEquals("hello", message.text)
+            assertEquals("alice-ack", message.senderId)
+        }
     }
 
     @Test
@@ -175,15 +178,9 @@ class KafkaEventConsumerIT {
             accepted("alice-multi", sendingDevice.sessionId, listOf("alice-multi"))
         )
 
-        StepVerifier.create(otherDevice.frames)
-            .assertNext { assertIs<OutboundFrame.MessageNew>(it) }
-            .thenCancel()
-            .verify(timeout)
+        otherDevice.nextFrame().let { assertIs<OutboundFrame.MessageNew>(it)}
 
-        StepVerifier.create(sendingDevice.frames)
-            .assertNext { assertIs<OutboundFrame.Ack>(it) }
-            .thenCancel()
-            .verify(timeout)
+        sendingDevice.nextFrame().let { assertIs<OutboundFrame.Ack>(it)}
     }
 
     @Test
@@ -196,13 +193,10 @@ class KafkaEventConsumerIT {
             accepted("alice-dup", alice.sessionId, emptyList(), clientMessageId = "c-dup", duplicate = true)
         )
 
-        StepVerifier.create(alice.frames)
-            .assertNext { assertEquals("c-dup", assertIs<OutboundFrame.Ack>(it).clientMsgId) }
-            .thenCancel()
-            .verify(timeout)
+        alice.nextFrame().let { assertEquals("c-dup", assertIs<OutboundFrame.Ack>(it).clientMsgId)}
 
         bob.complete()
-        StepVerifier.create(bob.frames).verifyComplete()
+        assertEquals(RelaySession.Outbound.Completed, bob.awaitOutbound())
     }
 
     @Test
@@ -220,14 +214,11 @@ class KafkaEventConsumerIT {
             )
         )
 
-        StepVerifier.create(mallory.frames)
-            .assertNext { frame ->
-                val error = assertIs<OutboundFrame.Error>(frame)
-                assertEquals("NOT_A_PARTICIPANT", error.code)
-                assertEquals("c-403", error.refId)
-            }
-            .thenCancel()
-            .verify(timeout)
+        mallory.nextFrame().let { frame ->
+            val error = assertIs<OutboundFrame.Error>(frame)
+            assertEquals("NOT_A_PARTICIPANT", error.code)
+            assertEquals("c-403", error.refId)
+        }
     }
 
     @Test
@@ -242,10 +233,7 @@ class KafkaEventConsumerIT {
         )
 
         // Carol got the frame (socket half of the XOR)...
-        StepVerifier.create(carol.frames)
-            .assertNext { assertIs<OutboundFrame.MessageNew>(it) }
-            .thenCancel()
-            .verify(timeout)
+        carol.nextFrame().let { assertIs<OutboundFrame.MessageNew>(it)}
 
         // ...and exactly one push request exists, for bob, keyed by his id (push half).
         val requests = requestedNotifications()
@@ -284,10 +272,7 @@ class KafkaEventConsumerIT {
         )
 
         // The ack still arrives...
-        StepVerifier.create(alice.frames)
-            .assertNext { assertIs<OutboundFrame.Ack>(it) }
-            .thenCancel()
-            .verify(timeout)
+        alice.nextFrame().let { assertIs<OutboundFrame.Ack>(it)}
         // ...but a retry of an already-delivered message must not buzz anyone's phone again.
         assertNoRequestedNotifications()
     }
@@ -307,14 +292,11 @@ class KafkaEventConsumerIT {
             )
         )
 
-        StepVerifier.create(bob.frames)
-            .assertNext { frame ->
-                val notification = assertIs<OutboundFrame.Notification>(frame)
-                assertEquals("FRIEND_REQUEST", notification.kind)
-                assertEquals("alice", notification.data["fromUserId"])
-            }
-            .thenCancel()
-            .verify(timeout)
+        bob.nextFrame().let { frame ->
+            val notification = assertIs<OutboundFrame.Notification>(frame)
+            assertEquals("FRIEND_REQUEST", notification.kind)
+            assertEquals("alice", notification.data["fromUserId"])
+        }
     }
 
     @Test
@@ -331,14 +313,11 @@ class KafkaEventConsumerIT {
             )
         )
 
-        StepVerifier.create(bob.frames)
-            .assertNext { frame ->
-                val signal = assertIs<OutboundFrame.CallSignal>(frame)
-                assertEquals("call-1", signal.callId)
-                assertEquals("offer", signal.signal["kind"])
-            }
-            .thenCancel()
-            .verify(timeout)
+        bob.nextFrame().let { frame ->
+            val signal = assertIs<OutboundFrame.CallSignal>(frame)
+            assertEquals("call-1", signal.callId)
+            assertEquals("offer", signal.signal["kind"])
+        }
     }
 
     @Test
@@ -351,11 +330,8 @@ class KafkaEventConsumerIT {
             accepted("someone", null, listOf("bob-poison"), clientMessageId = "c-after-poison")
         )
 
-        StepVerifier.create(bob.frames)
-            .assertNext { frame ->
-                assertEquals("m-c-after-poison", assertIs<OutboundFrame.MessageNew>(frame).messageId)
-            }
-            .thenCancel()
-            .verify(timeout)
+        bob.nextFrame().let { frame ->
+            assertEquals("m-c-after-poison", assertIs<OutboundFrame.MessageNew>(frame).messageId)
+        }
     }
 }

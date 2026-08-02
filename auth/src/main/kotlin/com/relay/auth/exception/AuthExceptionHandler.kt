@@ -6,8 +6,8 @@ import java.util.Arrays
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
+import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.RestControllerAdvice
-import org.springframework.web.bind.support.WebExchangeBindException
 
 @RestControllerAdvice
 class AuthExceptionHandler {
@@ -25,11 +25,12 @@ class AuthExceptionHandler {
         )
 
     /**
-     * WebFlux reports a `@Valid` failure as [WebExchangeBindException]. Without this it reaches the
-     * catch-all below and a rejected password comes back as a 500 with no hint of which rule failed.
+     * MVC reports a `@Valid` failure as [MethodArgumentNotValidException]. Without this it reaches
+     * the catch-all below and a rejected password comes back as a 500 with no hint of which rule
+     * failed.
      */
-    @ExceptionHandler(WebExchangeBindException::class)
-    fun handleValidationException(e: WebExchangeBindException): ResponseEntity<ResponseErrorDto> =
+    @ExceptionHandler(MethodArgumentNotValidException::class)
+    fun handleValidationException(e: MethodArgumentNotValidException): ResponseEntity<ResponseErrorDto> =
         ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
             ResponseErrorDto(
                 statusCode = HttpStatus.BAD_REQUEST.value(),
