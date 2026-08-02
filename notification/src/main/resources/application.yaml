@@ -11,9 +11,12 @@ spring:
     url: jdbc:postgresql://localhost:5435/notification
     username: postgres
     password: postgres
+    hikari:
+      maximum-pool-size: 15
+      connection-timeout: 3000
+      validation-timeout: 2000
+      leak-detection-threshold: 20000
   jpa:
-    # Flyway owns the schema; Hibernate only checks that the entities still match it and fails
-    # fast on drift. `update` never dropped or narrowed anything, so drift accumulated silently.
     hibernate:
       ddl-auto: validate
     open-in-view: false

@@ -32,6 +32,7 @@ user-service:
   base-url: "lb://user"
   users-path: "/internal/api/v1/users"
   request-timeout: 5s
+  connect-timeout: 2s
 
 kafka:
   bootstrap-servers: localhost:9092
