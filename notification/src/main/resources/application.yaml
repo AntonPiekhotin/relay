@@ -9,12 +9,18 @@ spring:
     username: postgres
     password: postgres
   jpa:
+    # Flyway owns the schema; Hibernate only checks that the entities still match it and fails
+    # fast on drift. `update` never dropped or narrowed anything, so drift accumulated silently.
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
   security:
     oauth2:
       resourceserver:

@@ -2,6 +2,7 @@ package com.relay.notification.input.event
 
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.NotificationRequestedEvent
+import com.relay.notification.PostgresTestcontainerConfig
 import com.relay.notification.model.DeviceToken
 import com.relay.notification.model.dto.RegisterDeviceTokenRequest
 import com.relay.notification.output.push.PushMessage
@@ -20,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Import
 import org.springframework.context.annotation.Primary
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.kafka.test.context.EmbeddedKafka
@@ -28,7 +30,8 @@ import tools.jackson.databind.json.JsonMapper
 /**
  * The step-2 pipeline against a real in-JVM broker: a push request on `notifications` reaches
  * every device the recipient registered, and only theirs — through the real consumer, the real
- * token store (H2), and the [PushSender] port with a recording double behind it.
+ * token store (Postgres, schema built by Flyway), and the [PushSender] port with a recording
+ * double behind it.
  */
 @SpringBootTest(
     properties = [
@@ -36,16 +39,12 @@ import tools.jackson.databind.json.JsonMapper
         // Force the FCM adapter off regardless of what application.yaml says: tests talk to
         // the recording double, never to Google.
         "relay.push.fcm.enabled=false",
-        "spring.datasource.url=jdbc:h2:mem:notifdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
-        "spring.datasource.username=sa",
-        "spring.datasource.password=",
-        "spring.jpa.hibernate.ddl-auto=create-drop",
-        "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect",
         "spring.kafka.bootstrap-servers=\${spring.embedded.kafka.brokers}",
         "spring.kafka.producer.key-serializer=org.apache.kafka.common.serialization.StringSerializer",
         "spring.kafka.producer.value-serializer=org.apache.kafka.common.serialization.StringSerializer"
     ]
 )
+@Import(PostgresTestcontainerConfig::class)
 @EmbeddedKafka(partitions = 1, topics = [KafkaTopics.NOTIFICATIONS])
 class NotificationRequestConsumerIT {
 

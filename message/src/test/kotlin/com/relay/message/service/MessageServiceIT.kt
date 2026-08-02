@@ -5,6 +5,7 @@ import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.SendMessageCommand
 import com.relay.common.exception.RelayException
+import com.relay.message.PostgresTestcontainerConfig
 import com.relay.message.model.dto.CreateDialogRequest
 import java.time.Duration
 import java.util.UUID
@@ -20,6 +21,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.kafka.test.EmbeddedKafkaBroker
@@ -36,14 +38,10 @@ import tools.jackson.databind.json.JsonMapper
 @SpringBootTest(
     properties = [
         "eureka.client.enabled=false",
-        "spring.datasource.url=jdbc:h2:mem:messagedb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
-        "spring.datasource.username=sa",
-        "spring.datasource.password=",
-        "spring.jpa.hibernate.ddl-auto=create-drop",
-        "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect",
         "spring.kafka.bootstrap-servers=\${spring.embedded.kafka.brokers}"
     ]
 )
+@Import(PostgresTestcontainerConfig::class)
 @EmbeddedKafka(partitions = 1, topics = [KafkaTopics.MESSAGES_INCOMING, KafkaTopics.MESSAGES_DELIVERY])
 class MessageServiceIT {
 

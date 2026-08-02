@@ -22,6 +22,7 @@ repositories {
 }
 
 extra["springCloudVersion"] = "2025.1.2"
+extra["testcontainersVersion"] = "1.21.3"
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
@@ -30,24 +31,28 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.springframework.cloud:spring-cloud-starter-netflix-eureka-client")
-    // spring-boot-kafka, not org.springframework.kafka:spring-kafka on its own: Boot 4 keeps
-    // auto-configuration in per-technology modules, and the bare library gives no KafkaTemplate.
     implementation("org.springframework.boot:spring-boot-kafka")
     implementation("tools.jackson.module:jackson-module-kotlin")
     implementation("com.relay:common:1.0")
+    implementation("org.flywaydb:flyway-core")
+    implementation("org.flywaydb:flyway-database-postgresql")
+    implementation("org.springframework.boot:spring-boot-flyway")
     runtimeOnly("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
     testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testImplementation("org.springframework.kafka:spring-kafka-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
-    testImplementation("com.h2database:h2")
+    testImplementation("org.springframework.boot:spring-boot-testcontainers")
+    testImplementation("org.testcontainers:postgresql")
+    testImplementation("org.testcontainers:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 dependencyManagement {
     imports {
         mavenBom("org.springframework.cloud:spring-cloud-dependencies:${property("springCloudVersion")}")
+        mavenBom("org.testcontainers:testcontainers-bom:${property("testcontainersVersion")}")
     }
 }
 
