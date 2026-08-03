@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController
  * Service-to-service only, under `/internal` so it is not reachable through the api-gateway.
  * That boundary is load-bearing: [SendMessageRequest.senderId] is trusted here.
  *
- * [send] is the REST fallback path of ARCHITECTURE.md §20.2 — it converges on the same
+ * [send] is the REST fallback send path — it converges on the same
  * [MessageService] the Kafka consumer uses, and the HTTP response plays the role of the ack.
  */
 @RestController

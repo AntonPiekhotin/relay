@@ -11,7 +11,7 @@ import java.util.UUID
 
 /**
  * The unique constraint on (sender_id, client_message_id) is what makes sending idempotent
- * (ARCHITECTURE.md §19.2): the client owns its UUID space, so a retry of the same send — over
+ *: the client owns its UUID space, so a retry of the same send — over
  * the socket or via the REST fallback after a lost ack — cannot produce a second row. It is
  * enforced in the schema rather than only in code, because two concurrent retries would both
  * pass an application-level check.

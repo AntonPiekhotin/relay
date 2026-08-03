@@ -22,7 +22,7 @@ import org.springframework.core.io.ResourceLoader
  *    Classpath keys are a local-dev convenience: the file is gitignored, but `bootJar` bakes
  *    resources into the artifact, so a jar built this way contains the secret — never publish it.
  * 2. Otherwise, Application Default Credentials — the `GOOGLE_APPLICATION_CREDENTIALS` env var,
- *    a `gcloud auth application-default login`, or (on GCP) the machine identity (§21.7).
+ *    a `gcloud auth application-default login`, or (on GCP) the machine identity.
  *
  * Failing fast is deliberate: with the flag on but no credentials resolvable, the service
  * refuses to start rather than run silently push-less.

@@ -2,7 +2,7 @@ package com.relay.common.event
 
 /**
  * A client send, published by websocket-gateway to `messages.incoming` and consumed by
- * message-service (ARCHITECTURE.md §13.1, §20.1). Keyed by [dialogId].
+ * message-service. Keyed by [dialogId].
  *
  * [clientMessageId] is the envelope `id` the client generated; together with [senderId] it is
  * the idempotency key, so a retry of the same send is recognised rather than stored twice.

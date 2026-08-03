@@ -15,9 +15,9 @@ import java.time.Instant
  *
  * [email] is deliberately NOT mutable through the profile API. It doubles as the Keycloak
  * username, so changing it here alone would desync identity from profile; an email change has
- * to start in auth (ARCHITECTURE.md §8.1).
+ * to start in auth.
  *
- * [avatarUrl] is denormalized on purpose (spec §19.1): it is derived from the `user_avatars`
+ * [avatarUrl] is denormalized on purpose: it is derived from the `user_avatars`
  * row, but storing it means listing contacts or search results never has to join the blob
  * table just to answer "does this user have a picture".
  */

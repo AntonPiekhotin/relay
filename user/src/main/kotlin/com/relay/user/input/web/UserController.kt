@@ -32,7 +32,7 @@ import org.springframework.web.multipart.MultipartFile
 
 /**
  * Client-facing profile surface, reached through the api-gateway's `/api/v1/user` route. The JWT
- * is validated here too, not only at the gateway (ARCHITECTURE.md §8.3), and every "my" endpoint
+ * is validated here too, not only at the gateway, and every "my" endpoint
  * resolves the subject from the token rather than the path.
  *
  * Password is not here: credentials live in Keycloak, so changing one is `POST /api/v1/auth/password`

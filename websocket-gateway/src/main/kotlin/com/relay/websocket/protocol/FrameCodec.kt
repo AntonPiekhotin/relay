@@ -7,7 +7,7 @@ import tools.jackson.databind.PropertyNamingStrategies
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.module.kotlin.KotlinModule
 
-/** Protocol version this gateway speaks (ARCHITECTURE.md §10.1). */
+/** Protocol version this gateway speaks. */
 const val PROTOCOL_VERSION = 1
 
 /** Decode failure carrying the error code and the offending frame's envelope id, if readable. */
@@ -18,8 +18,8 @@ class FrameDecodeException(
 ) : RuntimeException(message)
 
 /**
- * (De)serializes the versioned envelope of ARCHITECTURE.md §10:
- * `{v, type, id, ts, payload}` with dot-namespaced types and snake_case payload keys.
+ * (De)serializes the versioned envelope `{v, type, id, ts, payload}`, with dot-namespaced types
+ * and snake_case payload keys. The wire contract lives in `docs/PROTOCOL.md`.
  *
  * Wire format has its own mapper — snake_case is a client-facing contract and must not leak
  * into (or be broken by) the camelCase mapper used for internal Kafka events.

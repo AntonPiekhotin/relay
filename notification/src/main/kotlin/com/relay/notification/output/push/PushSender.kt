@@ -32,7 +32,7 @@ enum class PushResult {
 }
 
 /**
- * Port for the push transport (ARCHITECTURE.md §16.1). The delivery pipeline is written against
+ * Port for the push transport. The delivery pipeline is written against
  * this so the FCM integration is a matter of adding an adapter with real credentials — the
  * consumer, token lookup and per-device fan-out do not change.
  *

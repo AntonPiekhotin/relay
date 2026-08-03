@@ -18,21 +18,20 @@ object ErrorCodes {
 }
 
 /**
- * Gateway to client, wrapped into the envelope (ARCHITECTURE.md §10.1) by [FrameCodec] with a
+ * Gateway to client, wrapped into the envelope by [FrameCodec] with a
  * server-assigned `ts`.
  */
 sealed interface OutboundFrame {
 
     /**
-     * First frame on every accepted socket. Not in the spec's §10.2 catalogue — a deliberate
-     * extension so the client can confirm who it is connected as (documented in the spec's
-     * frame table as part of this migration).
+     * First frame on every accepted socket, so the client can confirm who it is connected as.
+     * Part of the wire contract — see the frame catalogue in `docs/PROTOCOL.md`.
      */
     data class SessionConnected(val userId: String, val sessionId: String) : OutboundFrame
 
     data class Pong(val refId: String? = null) : OutboundFrame
 
-    /** Confirms a `message.send` was stored; correlated by [clientMsgId] (§20.1 step 7). */
+    /** Confirms a `message.send` was stored; correlated by [clientMsgId]. */
     data class Ack(
         val clientMsgId: String,
         val messageId: String,
@@ -60,7 +59,7 @@ sealed interface OutboundFrame {
         val signal: Map<String, Any?>
     ) : OutboundFrame
 
-    /** [refId] echoes the envelope `id` of the frame that caused the error (§10.3). */
+    /** [refId] echoes the envelope `id` of the frame that caused the error. */
     data class Error(
         val code: String,
         val message: String,

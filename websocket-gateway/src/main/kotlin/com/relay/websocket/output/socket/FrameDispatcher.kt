@@ -7,9 +7,9 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
 /**
- * The single dispatch seam: everything that pushes a frame to a client goes through here, so
- * a future transport change (per-node Redis channels instead of local-only delivery — Pattern C
- * of ARCHITECTURE.md §14.3) is a change to this class, not to every call site.
+ * The single dispatch seam: everything that pushes a frame to a client goes through here, so a
+ * future transport change — per-node Redis channels instead of local-only delivery — is a change
+ * to this class, not to every call site.
  *
  * Recipients that have no local session are simply not connected — their client catches up
  * over REST on reconnect, since a live push channel is not a delivery guarantee (Principle 1).
@@ -69,7 +69,7 @@ class FrameDispatcher(
             true
         } else {
             // The client is not draining its socket. Closing it is deliberate: the alternative
-            // is buffering without bound on the gateway's heap (§9.5).
+            // is buffering without bound on the gateway's heap.
             logger.warn(
                 "Session {} for user {} overflowed its outbound buffer, closing",
                 session.sessionId, session.userId

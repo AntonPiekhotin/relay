@@ -8,6 +8,6 @@ import org.springframework.stereotype.Repository
 @Repository
 interface MessageRepository : JpaRepository<Message, UUID> {
 
-    /** Lookup on the idempotency key — the client owns its UUID space (ARCHITECTURE.md §19.2). */
+    /** Lookup on the idempotency key — the client owns its UUID space. */
     fun findBySenderIdAndClientMessageId(senderId: String, clientMessageId: String): Message?
 }

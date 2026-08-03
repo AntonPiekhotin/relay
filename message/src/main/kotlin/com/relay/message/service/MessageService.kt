@@ -17,8 +17,7 @@ import org.springframework.transaction.annotation.Transactional
 
 /**
  * The single convergence point for both send paths — the Kafka consumer and the REST fallback
- * both land here, per ARCHITECTURE.md §20.2 ("both paths must converge on the same persistence
- * and delivery code").
+ * both land here, so persistence and delivery cannot drift between the two.
  */
 @Service
 class MessageService(
@@ -47,7 +46,7 @@ class MessageService(
         }
 
         // The realistic duplicate: the send succeeded, its acknowledgement was lost, and the
-        // client retried. Returning the stored message makes that retry a no-op (§20.3).
+        // client retried. Returning the stored message makes that retry a no-op.
         messageRepository.findBySenderIdAndClientMessageId(request.senderId, request.clientMessageId)?.let {
             logger.debug("Returning existing message {} for repeated clientMessageId", it.id)
             return SendResult(it.toResponse(), dialog.participantIds.toSet(), created = false)

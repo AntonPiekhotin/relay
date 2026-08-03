@@ -21,7 +21,7 @@ data class ContactId(
  *
  * Composite key rather than a surrogate id, so "already in my contacts" is a primary-key hit and
  * a double-add cannot create a second row. The reverse index answers "who has me" — needed the
- * moment we notify a user that somebody added them (§16.3).
+ * moment we notify a user that somebody added them.
  */
 @Entity
 @Table(

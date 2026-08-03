@@ -9,7 +9,7 @@ import org.springframework.security.web.SecurityFilterChain
 /**
  * Unlike user/message (whose endpoints are `/internal` service-to-service), this service is
  * client-facing, so it validates the JWT itself against Keycloak's JWKS — the api-gateway's
- * check is not the only line of defence (ARCHITECTURE.md §8.3). The gateway forwards the
+ * check is not the only line of defence. The gateway forwards the
  * client's `Authorization: Bearer` header unchanged.
  */
 @Configuration

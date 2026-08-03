@@ -8,9 +8,9 @@ package com.relay.websocket.protocol
 const val ACCESS_TOKEN_PROTOCOL = "access_token"
 
 /**
- * Client to gateway, already unwrapped from the envelope (ARCHITECTURE.md §10.1) by
- * [FrameCodec]. [id] is the envelope `id` — client-generated, used for correlation and
- * idempotency; [ts] is the client timestamp, advisory only.
+ * Client to gateway, already unwrapped from the envelope by [FrameCodec]. [id] is the envelope
+ * `id` — client-generated, used for correlation and idempotency; [ts] is the client timestamp,
+ * advisory only.
  *
  * Adding a subtype forces every `when` over this hierarchy to handle it, which is how later
  * phases pick up new commands without silently dropping them.

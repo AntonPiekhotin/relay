@@ -13,10 +13,10 @@ import org.springframework.stereotype.Component
 
 /**
  * Dispatches one inbound frame. Sends are handed to [MessageEventProducer] and the ack arrives
- * later via `messages.delivery` (ARCHITECTURE.md §13.1, §20.1) — nothing here waits.
+ * later via `messages.delivery` — nothing here waits.
  *
  * A frame the gateway cannot handle produces an `error` frame rather than closing the socket:
- * one bad frame should not cost the client its connection (§10.3).
+ * one bad frame should not cost the client its connection.
  */
 @Component
 class InboundFrameRouter(

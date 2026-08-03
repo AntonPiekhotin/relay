@@ -6,8 +6,8 @@ import java.time.Instant
 
 /**
  * Outcome of a send, published by message-service to `messages.delivery` and consumed by every
- * websocket-gateway instance (broadcast via per-instance consumer groups — see the follow-up in
- * ARCHITECTURE.md §23 before adding a second gateway node).
+ * websocket-gateway instance: every node sees every outcome and delivers to whatever sessions it
+ * holds, which is what per-instance consumer groups buy.
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "outcome")
 @JsonSubTypes(

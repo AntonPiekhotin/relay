@@ -3,9 +3,9 @@ package com.relay.common.event
 import java.time.Instant
 
 /**
- * A request to notify one user who has no live socket (ARCHITECTURE.md §14.2: offline →
- * `notifications` → notification-service → FCM). One event per recipient, keyed by
- * [recipientId], so notification-service can look up that user's device tokens directly.
+ * A request to notify one user who has no live socket: offline → `notifications` →
+ * notification-service → FCM. One event per recipient, keyed by [recipientId], so
+ * notification-service can look up that user's device tokens directly.
  *
  * [payload] is untyped for the same reason as [NotificationCreatedEvent]: its shape varies by
  * [kind] (`MESSAGE_NEW` carries message fields; a future `MISSED_CALL` carries call fields),

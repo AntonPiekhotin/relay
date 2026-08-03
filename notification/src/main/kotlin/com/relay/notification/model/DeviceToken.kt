@@ -14,10 +14,10 @@ data class DeviceTokenId(
 ) : Serializable
 
 /**
- * ARCHITECTURE.md §19.4. One row per (user, device): a user carries several devices, and each
- * re-registers its token in place — hence the composite key rather than a surrogate id.
+ * One row per (user, device): a user carries several devices, and each re-registers its token
+ * in place — hence the composite key rather than a surrogate id.
  *
- * [fcmToken] and [voipToken] are deliberately separate columns (decision 26): on iOS, PushKit
+ * [fcmToken] and [voipToken] are deliberately separate columns: on iOS, PushKit
  * VoIP tokens come from a different mechanism than APNs tokens and are not interchangeable.
  * Merging them would force a migration the moment calls ship.
  */

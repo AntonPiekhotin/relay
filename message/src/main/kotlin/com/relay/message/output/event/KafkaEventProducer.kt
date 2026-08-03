@@ -23,7 +23,7 @@ class KafkaEventProducer(
      *
      * This is at-most-once: a crash between commit and publish loses the event, and the client
      * recovers it from history on reconnect rather than over the socket — the accepted dual-write
-     * tradeoff of ARCHITECTURE.md §13.3. An outbox table is the escalation path.
+     * tradeoff. An outbox table is the escalation path.
      *
      * Keyed by dialog so a dialog's messages stay ordered within a partition.
      */

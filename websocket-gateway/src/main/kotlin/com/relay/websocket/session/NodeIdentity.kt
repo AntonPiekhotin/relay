@@ -6,10 +6,10 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 
 /**
- * Stable identity of this gateway instance (ARCHITECTURE.md §9.2, Principle 5). Nothing reads
- * it yet — it exists now because it is a prerequisite for every future routing path (session
- * registry entries, per-node delivery channels), and threading it through later touches every
- * call site.
+ * Stable identity of this gateway instance — build for one instance, design for N. Nothing
+ * reads it yet; it exists now because it is a prerequisite for every future routing path
+ * (session registry entries, per-node delivery channels), and threading it through later
+ * touches every call site.
  *
  * Set `NODE_ID` in the environment for a stable name; otherwise a UUID is generated and held
  * for the process lifetime.

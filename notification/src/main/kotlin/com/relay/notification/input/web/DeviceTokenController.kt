@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController
 /**
  * Client-facing, reached through the api-gateway (the `/api/v1/notification` route to
  * `lb://notification`). The owner of every token is the JWT's `sub` — validated here, not just
- * at the gateway, per ARCHITECTURE.md §8.3: the gateway must not be the only line of defence.
+ * at the gateway: the gateway must not be the only line of defence.
  */
 @RestController
 @RequestMapping(path = ["/api/v1/notification/device-tokens"])

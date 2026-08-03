@@ -4,7 +4,7 @@ import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 
 /**
- * REST fallback send (ARCHITECTURE.md §20.2) — used when the socket is not established, by
+ * REST fallback send — used when the socket is not established, by
  * bots, and by tests. Converges on the same persistence code as the Kafka path.
  *
  * [clientMessageId] plus [senderId] is the idempotency key; a retry returns the stored message.

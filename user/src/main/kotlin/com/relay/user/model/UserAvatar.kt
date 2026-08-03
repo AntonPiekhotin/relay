@@ -22,9 +22,9 @@ const val AVATAR_COLUMN_BYTES = 1024 * 1024
  * and contact listing all select whole `User` entities, and a blob on that entity would ride
  * along with every one of them.
  *
- * Bytes in Postgres are the deliberate first cut — no object store exists in the deployment yet
- * (ARCHITECTURE.md §18 media plane is unbuilt). The serving URL is ours, so moving to S3/MinIO
- * later is a change to this adapter and nothing on the client.
+ * Bytes in Postgres are the deliberate first cut — no object store exists in the deployment yet.
+ * The serving URL is ours, so moving to S3/MinIO later is a change to this adapter and nothing
+ * on the client.
  *
  * The JDBC type is pinned to `VARBINARY` rather than left to the dialect. Neither `@Lob` nor a large
  * `length` works: both make Hibernate reach for a large-object type — `oid` on Postgres (server-side

@@ -9,10 +9,10 @@ import org.springframework.stereotype.Component
 import tools.jackson.databind.json.JsonMapper
 
 /**
- * Owns the gateway's side of the `messages.incoming` contract (ARCHITECTURE.md §13.1): topic,
+ * Owns the gateway's side of the `messages.incoming` contract: topic,
  * partition key, and serialization live here, not in the frame router.
  *
- * Keyed by dialog so a conversation's sends stay ordered within one partition (§13.2).
+ * Keyed by dialog so a conversation's sends stay ordered within one partition.
  */
 @Component
 class MessageEventProducer(

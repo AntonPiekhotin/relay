@@ -19,8 +19,7 @@ class UserSecurityConfig {
      *    which point the user has no token yet. Those paths are not routed by the api-gateway, so
      *    they are only reachable service-to-service.
      *  - everything under `/api/v1/user` is client-facing and validates the JWT here against
-     *    Keycloak's JWKS. The
-     *    gateway already checks it, but per ARCHITECTURE.md §8.3 the gateway must not be the only
+     *    Keycloak's JWKS. The gateway already checks it, but the gateway must not be the only
      *    line of defence — and the endpoints need the `sub` claim anyway to know who "me" is.
      */
     @Bean

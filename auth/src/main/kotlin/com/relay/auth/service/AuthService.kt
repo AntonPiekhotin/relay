@@ -31,7 +31,7 @@ class AuthService(
 
     /**
      * Password changes live here rather than in user-service because Keycloak owns the credential —
-     * user-db has no password column to update (ARCHITECTURE.md §8.1).
+     * user-db has no password column to update.
      *
      * The current password is re-verified with a password grant, the only way to check a credential
      * through Keycloak's API, before the admin client overwrites it. Holding a valid access token is
