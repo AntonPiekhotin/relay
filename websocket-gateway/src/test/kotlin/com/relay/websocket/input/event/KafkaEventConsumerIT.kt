@@ -47,8 +47,11 @@ import tools.jackson.databind.json.JsonMapper
         "spring.kafka.producer.value-serializer=org.apache.kafka.common.serialization.StringSerializer"
     ]
 )
+// Partitioned like production, not with a convenient 1: the app's own NewTopic beans would
+// raise a 1-partition topic to PARTITIONS anyway, and the listeners request that much
+// concurrency, so an under-partitioned broker only hides what the real one will do.
 @EmbeddedKafka(
-    partitions = 1,
+    partitions = KafkaTopics.PARTITIONS,
     topics = [
         KafkaTopics.MESSAGES_DELIVERY,
         KafkaTopics.NOTIFICATIONS,
@@ -71,7 +74,10 @@ class KafkaEventConsumerIT {
 
     @BeforeTest
     fun waitForPartitionAssignment() {
-        endpoints.listenerContainers.forEach { ContainerTestUtils.waitForAssignment(it, 1) }
+        // Each container is alone in its group, so it owns every partition of its topic.
+        endpoints.listenerContainers.forEach {
+            ContainerTestUtils.waitForAssignment(it, KafkaTopics.PARTITIONS)
+        }
     }
 
     @BeforeTest
@@ -324,11 +330,20 @@ class KafkaEventConsumerIT {
     fun `a malformed event does not stall the partition behind it`() {
         val bob = sessionFor("bob-poison")
 
-        kafkaTemplate.send(KafkaTopics.MESSAGES_DELIVERY, "{ not a valid event }").get()
-        publish(
+        // Both records are pinned to one partition on purpose. The claim under test is that the
+        // poison record does not block what is queued *behind* it, and "behind" only exists
+        // within a partition — spread across three, the good record could be consumed by another
+        // thread entirely and the test would pass without proving anything.
+        val partition = 0
+        kafkaTemplate.send(KafkaTopics.MESSAGES_DELIVERY, partition, "poison", "{ not a valid event }").get()
+        kafkaTemplate.send(
             KafkaTopics.MESSAGES_DELIVERY,
-            accepted("someone", null, listOf("bob-poison"), clientMessageId = "c-after-poison")
-        )
+            partition,
+            "poison",
+            jsonMapper.writeValueAsString(
+                accepted("someone", null, listOf("bob-poison"), clientMessageId = "c-after-poison")
+            )
+        ).get()
 
         bob.nextFrame().let { frame ->
             assertEquals("m-c-after-poison", assertIs<OutboundFrame.MessageNew>(frame).messageId)

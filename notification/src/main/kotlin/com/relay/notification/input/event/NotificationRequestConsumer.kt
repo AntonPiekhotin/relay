@@ -15,8 +15,8 @@ import tools.jackson.databind.json.JsonMapper
 private const val PREVIEW_LENGTH = 140
 
 /**
- * Consumes push requests for users the gateway found offline (ARCHITECTURE.md §14.2, §16.1) and
- * fans them out to every device the recipient has registered.
+ * Consumes push requests for users the gateway found offline and fans them out to every device
+ * the recipient has registered.
  *
  * Shared consumer group: requests are work to be processed exactly once, so instances compete
  * for partitions. Events are keyed by recipient, so one user's pushes stay ordered.
@@ -33,7 +33,11 @@ class NotificationRequestConsumer(
 
     private val logger = LoggerFactory.getLogger(javaClass)
 
-    @KafkaListener(topics = [KafkaTopics.NOTIFICATIONS], groupId = "notification-service")
+    @KafkaListener(
+        topics = [KafkaTopics.NOTIFICATIONS],
+        groupId = "notification-service",
+        concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
+    )
     fun onNotificationRequested(raw: String) {
         try {
             val request = parseRequest(raw)

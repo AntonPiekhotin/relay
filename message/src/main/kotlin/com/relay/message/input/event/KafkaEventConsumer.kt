@@ -18,9 +18,9 @@ import org.springframework.stereotype.Component
 import tools.jackson.databind.json.JsonMapper
 
 /**
- * The WebSocket send path (ARCHITECTURE.md §13.1, §20.1): consumes client sends from
- * `messages.incoming`, persists through the same [MessageService] the REST fallback uses, and
- * answers with an Accepted/Rejected event on `messages.delivery`.
+ * The WebSocket send path: consumes client sends from `messages.incoming`, persists through the
+ * same [MessageService] the REST fallback uses, and answers with an Accepted/Rejected event on
+ * `messages.delivery`.
  *
  * Every outcome — success, duplicate, rejection — produces a delivery event. A send that
  * produced no event would leave the client's message stuck in "sending" until its timeout.
@@ -38,7 +38,11 @@ class KafkaEventConsumer(
 
     private val logger = LoggerFactory.getLogger(javaClass)
 
-    @KafkaListener(topics = [KafkaTopics.MESSAGES_INCOMING], groupId = "message-service")
+    @KafkaListener(
+        topics = [KafkaTopics.MESSAGES_INCOMING],
+        groupId = "message-service",
+        concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
+    )
     fun onSendCommand(raw: String) {
         val command = try {
             jsonMapper.readValue(raw, SendMessageCommand::class.java)
@@ -65,7 +69,7 @@ class KafkaEventConsumer(
 
     /**
      * It means that the original ack for this message was lost. So the ack event
-     * must be published here — otherwise the retry never gets its ack (§20.3).
+     * must be published here — otherwise the retry never gets its ack.
      */
     private fun sendAckDirectly(
         result: SendResult,

@@ -14,12 +14,13 @@ import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
 
 /**
- * Turns broker events into frames on live sockets. Runs on Kafka listener threads, not the
- * Netty event loop — handing frames to a session's sink is the only work done here.
+ * Turns broker events into frames on live sockets. Runs on Kafka listener threads — handing a
+ * frame to a session's outbound queue is the only work done here.
  *
  * Consumer groups are per-instance (see application.yaml): every gateway node sees every event
- * and delivers to whatever sessions it holds. See the follow-up recorded in ARCHITECTURE.md §23
- * before changing the group strategy.
+ * and delivers to whatever sessions it holds. A shared group would split partitions across
+ * instances and silently drop events at whichever one does not hold the target session, so do
+ * not change the group strategy without reading `docs/KAFKA.md` first.
  */
 @Component
 class KafkaEventConsumer(
@@ -30,11 +31,14 @@ class KafkaEventConsumer(
 ) {
 
     /**
-     * The outcome of a send (ARCHITECTURE.md §20.1 steps 7–10): ack (or error) to the exact
-     * session that sent; `message.new` to every other session of every recipient. A duplicate
-     * outcome acks the sender but fans out nothing — the original already did.
+     * The outcome of a send: ack (or error) to the exact session that sent; `message.new` to
+     * every other session of every recipient. A duplicate outcome acks the sender but fans out
+     * nothing — the original already did.
      */
-    @KafkaListener(topics = [KafkaTopics.MESSAGES_DELIVERY])
+    @KafkaListener(
+        topics = [KafkaTopics.MESSAGES_DELIVERY],
+        concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
+    )
     fun onDeliveryEvent(raw: String) {
         val event = codec.decode(KafkaTopics.MESSAGES_DELIVERY, raw, MessageDeliveryEvent::class.java)
             ?: return
@@ -80,14 +84,14 @@ class KafkaEventConsumer(
     }
 
     /**
-     * Socket XOR push (ARCHITECTURE.md §16.2): a recipient with no live session gets a push
+     * Socket XOR push: a recipient with no live session gets a push
      * notification request instead of a frame. The sender is never notified about their own
      * message, whatever their connection state.
      *
      * The online check is this node's in-memory registry — the global truth only while the
      * gateway runs as a single instance. On multiple nodes each instance would wrongly declare
-     * users on *other* nodes offline; this decision moves into the shared session registry at
-     * the Pattern C migration (recorded follow-up, §23).
+     * users on *other* nodes offline; this decision moves into the shared session registry when
+     * delivery routing becomes per-node.
      */
     private fun requestNotificationsForOfflineRecipients(event: MessageDeliveryEvent.Accepted) {
         event.recipientIds
@@ -113,7 +117,10 @@ class KafkaEventConsumer(
      * the XOR. The requests topic ([KafkaTopics.NOTIFICATIONS]) flows the opposite way and is
      * deliberately not consumed here.
      */
-    @KafkaListener(topics = [KafkaTopics.NOTIFICATIONS_DELIVERY])
+    @KafkaListener(
+        topics = [KafkaTopics.NOTIFICATIONS_DELIVERY],
+        concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
+    )
     fun onNotification(raw: String) {
         val event = codec.decode(KafkaTopics.NOTIFICATIONS_DELIVERY, raw, NotificationCreatedEvent::class.java)
             ?: return
@@ -128,7 +135,10 @@ class KafkaEventConsumer(
         )
     }
 
-    @KafkaListener(topics = [KafkaTopics.CALL_SIGNAL])
+    @KafkaListener(
+        topics = [KafkaTopics.CALL_SIGNAL],
+        concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
+    )
     fun onCallSignal(raw: String) {
         val event = codec.decode(KafkaTopics.CALL_SIGNAL, raw, CallSignalEvent::class.java)
             ?: return

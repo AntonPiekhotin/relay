@@ -28,12 +28,12 @@ class UserServiceConfig {
         props: UserServiceProperties
     ): RestClient = builder
         .baseUrl(props.baseUrl)
-        // The reactive client applied this budget with `.timeout()` on the returned Mono. A blocking
-        // client has to push it down to the transport instead, or a silent peer parks the calling
-        // thread indefinitely.
         .requestFactory(
-            JdkClientHttpRequestFactory(HttpClient.newHttpClient())
-                .apply { setReadTimeout(props.requestTimeout) }
+            JdkClientHttpRequestFactory(
+                HttpClient.newBuilder()
+                    .connectTimeout(props.connectTimeout)
+                    .build()
+            ).apply { setReadTimeout(props.requestTimeout) }
         )
         .build()
 }
