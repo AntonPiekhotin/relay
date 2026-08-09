@@ -23,7 +23,7 @@ spring:
     #
     # In particular there is no `discovery.locator.enabled: false` any more: unlike the WebFlux
     # flavour, Gateway MVC ships no discovery route locator at all, so no service ever gets an
-    # automatic /{serviceId}/** route. The routes are exactly the four declared in
+    # automatic /{serviceId}/** route. The routes are exactly the five declared in
     # ApiGatewayConfig, which keeps /internal paths unreachable from outside by construction.
 
 eureka:

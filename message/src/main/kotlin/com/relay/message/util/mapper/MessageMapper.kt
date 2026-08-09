@@ -14,8 +14,10 @@ fun Message.toResponse() = MessageResponse(
     clientMessageId = clientMessageId
 )
 
+/** `type` goes out lowercase to match the wire shape documented in `docs/PROTOCOL.md` §5.3. */
 fun Dialog.toResponse() = DialogResponse(
     id = id.toString(),
+    type = type.name.lowercase(),
     participantIds = participantIds.toSet(),
     createdAt = createdAt
 )

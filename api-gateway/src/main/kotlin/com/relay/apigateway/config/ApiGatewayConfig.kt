@@ -28,6 +28,9 @@ class ApiGatewayConfig {
     fun callRoute(): RouterFunction<ServerResponse> = forward("call", "/api/v1/call/**")
 
     @Bean
+    fun messageRoute(): RouterFunction<ServerResponse> = forward("message", "/api/v1/message/**")
+
+    @Bean
     fun notificationRoute(): RouterFunction<ServerResponse> =
         forward("notification", "/api/v1/notification/**")
 
