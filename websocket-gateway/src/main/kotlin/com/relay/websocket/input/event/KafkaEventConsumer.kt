@@ -1,6 +1,8 @@
 package com.relay.websocket.input.event
 
 import com.relay.common.event.CallSignalEvent
+import com.relay.common.event.CallSignalKeys
+import com.relay.common.event.CallSignalVerbs
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
@@ -10,6 +12,7 @@ import com.relay.websocket.output.socket.FrameDispatcher
 import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.SessionRegistry
 import com.relay.websocket.util.EventCodec
+import java.time.Instant
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
 
@@ -135,6 +138,10 @@ class KafkaEventConsumer(
         )
     }
 
+    /**
+     * Relays a call signal verbatim. The gateway reads nothing inside [CallSignalEvent.signal]
+     * except the verb, and only to answer one question: does an unreachable callee need a push?
+     */
     @KafkaListener(
         topics = [KafkaTopics.CALL_SIGNAL],
         concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
@@ -142,13 +149,49 @@ class KafkaEventConsumer(
     fun onCallSignal(raw: String) {
         val event = codec.decode(KafkaTopics.CALL_SIGNAL, raw, CallSignalEvent::class.java)
             ?: return
-        dispatcher.deliverToUsers(
-            event.recipientIds,
-            OutboundFrame.CallSignal(
-                callId = event.callId,
-                fromUserId = event.fromUserId,
-                signal = event.signal
-            )
+        val frame = OutboundFrame.CallSignal(
+            callId = event.callId,
+            fromUserId = event.fromUserId,
+            signal = event.signal
         )
+        if (event.excludeSessionIds.isEmpty()) {
+            dispatcher.deliverToUsers(event.recipientIds, frame)
+        } else {
+            // A user's other devices are told to stop ringing; the one that answered is not.
+            dispatcher.deliverToUsersExcept(event.recipientIds, event.excludeSessionIds.toSet(), frame)
+        }
+        requestPushForUnreachableCallees(event)
+    }
+
+    /**
+     * Socket XOR push, for calls. A callee with no live session cannot be rung with a frame, so the
+     * invite becomes a push request instead — the same decision, and the same in-memory-registry
+     * caveat, as [requestNotificationsForOfflineRecipients].
+     *
+     * Only invites. Every other verb concerns a call the client is already tracking, and a push for
+     * one would be noise.
+     */
+    private fun requestPushForUnreachableCallees(event: CallSignalEvent) {
+        if (event.signal[CallSignalKeys.VERB] != CallSignalVerbs.INVITE) return
+        val media = event.signal[CallSignalKeys.MEDIA] as? String ?: return
+        val ringExpiresAt = (event.signal[CallSignalKeys.RING_EXPIRES_AT] as? String)
+            ?.let { runCatching { Instant.parse(it) }.getOrNull() }
+            ?: return
+
+        event.recipientIds
+            .distinct()
+            .filter { it != event.fromUserId && !registry.isOnline(it) }
+            .forEach { recipientId ->
+                notificationEventProducer.publish(
+                    NotificationRequestedEvent.incomingCall(
+                        recipientId = recipientId,
+                        callId = event.callId,
+                        callerId = event.fromUserId,
+                        media = media,
+                        requestedAt = Instant.now(),
+                        ringExpiresAt = ringExpiresAt
+                    )
+                )
+            }
     }
 }

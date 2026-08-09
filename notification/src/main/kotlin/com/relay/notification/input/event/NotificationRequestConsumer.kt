@@ -75,7 +75,10 @@ class NotificationRequestConsumer(
 
     /**
      * Turns a request into displayable content. Kinds are added here as features grow
-     * (MISSED_CALL, CONTACT_REQUEST, ...); an unknown kind throws and the request is skipped.
+     * (CONTACT_REQUEST, ...); an unknown kind throws and the request is skipped.
+     *
+     * No display names anywhere: this service knows ids, and resolving them would mean calling
+     * user-service on the push path. The client already has the contact and renders the name.
      */
     private fun render(request: NotificationRequestedEvent): PushMessage = when (request.kind) {
         NotificationRequestedEvent.KIND_MESSAGE_NEW -> PushMessage(
@@ -88,7 +91,41 @@ class NotificationRequestConsumer(
                 "senderId" to request.payload["senderId"].toString()
             )
         )
+
+        /*
+         * Data only, so the client can raise its own incoming-call UI instead of the OS drawing a
+         * banner the user has to tap. `ringExpiresAt` travels along because this push is worthless
+         * once the server has stopped ringing — a call notification for a call that is already
+         * missed must not put an answer button on screen.
+         */
+        NotificationRequestedEvent.KIND_INCOMING_CALL -> PushMessage(
+            title = "Incoming call",
+            body = "Incoming ${request.mediaOrDefault()} call",
+            data = mapOf(
+                "kind" to request.kind,
+                "callId" to request.payload[NotificationRequestedEvent.KEY_CALL_ID].toString(),
+                "callerId" to request.payload[NotificationRequestedEvent.KEY_CALLER_ID].toString(),
+                "media" to request.mediaOrDefault(),
+                "ringExpiresAt" to request.payload[NotificationRequestedEvent.KEY_RING_EXPIRES_AT].toString()
+            ),
+            dataOnly = true
+        )
+
+        /* After the fact, so an ordinary visible alert is exactly right. */
+        NotificationRequestedEvent.KIND_MISSED_CALL -> PushMessage(
+            title = "Missed call",
+            body = "You missed a ${request.mediaOrDefault()} call",
+            data = mapOf(
+                "kind" to request.kind,
+                "callId" to request.payload[NotificationRequestedEvent.KEY_CALL_ID].toString(),
+                "callerId" to request.payload[NotificationRequestedEvent.KEY_CALLER_ID].toString(),
+                "media" to request.mediaOrDefault()
+            )
+        )
+
         else -> throw IllegalArgumentException("Unknown notification kind '${request.kind}'")
     }
 
+    private fun NotificationRequestedEvent.mediaOrDefault(): String =
+        payload[NotificationRequestedEvent.KEY_MEDIA] as? String ?: "voice"
 }

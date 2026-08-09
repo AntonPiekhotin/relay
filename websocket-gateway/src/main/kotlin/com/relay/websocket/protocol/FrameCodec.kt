@@ -42,6 +42,24 @@ class FrameCodec {
 
     private data class MessageSendPayload(val dialogId: String? = null, val text: String? = null)
 
+    private data class CallInvitePayload(
+        val callId: String? = null,
+        val calleeId: String? = null,
+        val media: String? = null,
+        val sdp: String? = null,
+        val dialogId: String? = null
+    )
+
+    private data class CallAcceptPayload(val callId: String? = null, val sdp: String? = null)
+
+    /** Serves both `call.reject` and `call.hangup`, whose payloads are the same shape. */
+    private data class CallReasonPayload(val callId: String? = null, val reason: String? = null)
+
+    private data class CallIcePayload(
+        val callId: String? = null,
+        val candidate: Map<String, Any?>? = null
+    )
+
     fun decode(raw: String): InboundFrame {
         val envelope = try {
             mapper.readValue(raw, Envelope::class.java)
@@ -60,6 +78,11 @@ class FrameCodec {
         return when (envelope.type) {
             "ping" -> InboundFrame.Ping(envelope.id, envelope.ts)
             "message.send" -> messageSend(envelope)
+            "call.invite" -> callInvite(envelope)
+            "call.accept" -> callAccept(envelope)
+            "call.reject" -> callReject(envelope)
+            "call.ice" -> callIce(envelope)
+            "call.hangup" -> callHangup(envelope)
             null -> throw FrameDecodeException(ErrorCodes.BAD_FRAME, "Envelope field 'type' is required", envelope.id)
             else -> throw FrameDecodeException(ErrorCodes.BAD_FRAME, "Unknown frame type '${envelope.type}'", envelope.id)
         }
@@ -82,6 +105,78 @@ class FrameCodec {
                 ?: throw FrameDecodeException(ErrorCodes.BAD_FRAME, "payload.text is required", id)
         )
     }
+
+    private fun callInvite(envelope: Envelope): InboundFrame.CallInvite {
+        val id = requireEnvelopeId(envelope, "call.invite")
+        val payload = payload(envelope, id, "call.invite", CallInvitePayload::class.java)
+        return InboundFrame.CallInvite(
+            id = id,
+            ts = envelope.ts,
+            callId = payload.callId.required("call_id", id),
+            calleeId = payload.calleeId.required("callee_id", id),
+            media = payload.media.required("media", id),
+            sdp = payload.sdp.required("sdp", id),
+            dialogId = payload.dialogId?.takeIf { it.isNotBlank() }
+        )
+    }
+
+    private fun callAccept(envelope: Envelope): InboundFrame.CallAccept {
+        val id = requireEnvelopeId(envelope, "call.accept")
+        val payload = payload(envelope, id, "call.accept", CallAcceptPayload::class.java)
+        return InboundFrame.CallAccept(
+            id = id,
+            ts = envelope.ts,
+            callId = payload.callId.required("call_id", id),
+            sdp = payload.sdp.required("sdp", id)
+        )
+    }
+
+    private fun callReject(envelope: Envelope): InboundFrame.CallReject {
+        val id = requireEnvelopeId(envelope, "call.reject")
+        val payload = payload(envelope, id, "call.reject", CallReasonPayload::class.java)
+        return InboundFrame.CallReject(
+            id = id,
+            ts = envelope.ts,
+            callId = payload.callId.required("call_id", id),
+            reason = payload.reason?.takeIf { it.isNotBlank() }
+        )
+    }
+
+    private fun callHangup(envelope: Envelope): InboundFrame.CallHangup {
+        val id = requireEnvelopeId(envelope, "call.hangup")
+        val payload = payload(envelope, id, "call.hangup", CallReasonPayload::class.java)
+        return InboundFrame.CallHangup(
+            id = id,
+            ts = envelope.ts,
+            callId = payload.callId.required("call_id", id),
+            reason = payload.reason?.takeIf { it.isNotBlank() }
+        )
+    }
+
+    private fun callIce(envelope: Envelope): InboundFrame.CallIce {
+        val id = requireEnvelopeId(envelope, "call.ice")
+        val payload = payload(envelope, id, "call.ice", CallIcePayload::class.java)
+        val candidate = payload.candidate?.takeIf { it.isNotEmpty() }
+            ?: throw FrameDecodeException(ErrorCodes.BAD_FRAME, "payload.candidate is required", id)
+        return InboundFrame.CallIce(
+            id = id,
+            ts = envelope.ts,
+            callId = payload.callId.required("call_id", id),
+            candidate = candidate
+        )
+    }
+
+    private fun requireEnvelopeId(envelope: Envelope, type: String): String =
+        envelope.id?.takeIf { it.isNotBlank() }
+            ?: throw FrameDecodeException(ErrorCodes.BAD_FRAME, "$type requires an envelope 'id'")
+
+    private fun <T> payload(envelope: Envelope, id: String, type: String, target: Class<T>): T =
+        envelope.payload?.let { mapper.treeToValue(it, target) }
+            ?: throw FrameDecodeException(ErrorCodes.BAD_FRAME, "$type requires a payload", id)
+
+    private fun String?.required(field: String, refId: String): String =
+        this?.takeIf { it.isNotBlank() }
+            ?: throw FrameDecodeException(ErrorCodes.BAD_FRAME, "payload.$field is required", refId)
 
     fun encode(frame: OutboundFrame): String {
         val type = when (frame) {

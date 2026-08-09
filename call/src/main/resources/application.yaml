@@ -1,6 +1,68 @@
+server:
+  port: 0
+
 spring:
   threads:
     virtual:
       enabled: true
   application:
     name: call
+  datasource:
+    url: jdbc:postgresql://localhost:5436/call
+    username: postgres
+    password: postgres
+    hikari:
+      maximum-pool-size: 15
+      connection-timeout: 3000
+      validation-timeout: 2000
+      leak-detection-threshold: 20000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8081/realms/relay-realm
+          jwk-set-uri: http://localhost:8081/realms/relay-realm/protocol/openid-connect/certs
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+relay:
+  call:
+    ring-timeout: 40s
+    sweep-interval: 5s
+    ice-buffer-ttl: 5s
+    history-page-size: 50
+    max-history-page-size: 100
+    turn:
+      urls:
+        - stun:localhost:3478
+        - turn:localhost:3478?transport=udp
+        - turn:localhost:3478?transport=tcp
+      static-auth-secret: ${TURN_STATIC_AUTH_SECRET:relay-turn-dev-secret}
+      credential-ttl: 12h
+
+eureka:
+  instance:
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 10
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+
+logging:
+  level:
+    com.relay: DEBUG
+    root: INFO

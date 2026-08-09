@@ -37,9 +37,14 @@ object KafkaTopics {
     const val NOTIFICATIONS_DELIVERY = "notifications.delivery"
 
     /**
-     * Call signaling relay. NOTE: the architecture routes signaling around Kafka entirely, on
-     * the grounds that queue latency is invisible for chat and fatal for call setup; whether
-     * this topic survives is to be decided when the call service is implemented.
+     * Call signaling relay. call-service → websocket-gateway, keyed by callId so one call's
+     * signals stay ordered within a partition.
+     *
+     * Only the *outbound* leg runs here. A client's signal reaches call-service directly over
+     * HTTP, because that half is a request the gateway needs an answer to; the relay back out
+     * stays on Kafka because the gateway's broadcast group already delivers to whichever node
+     * holds the target socket, which a load-balanced HTTP push cannot do until the shared session
+     * registry exists. See `docs/ARCHITECTURE.md` §7 and decision 21.
      */
     const val CALL_SIGNAL = "call.signal"
 }

@@ -32,9 +32,8 @@ class WebSocketKafkaTopicsConfig {
     @Bean
     fun notificationsDeliveryTopic(): NewTopic = topic(KafkaTopics.NOTIFICATIONS_DELIVERY)
 
-    /** Also consumed with no producer — the call service is not built. */
-    @Bean
-    fun callSignalTopic(): NewTopic = topic(KafkaTopics.CALL_SIGNAL)
+    // `call.signal` is consumed here but declared by call-service, which produces it. A topic is
+    // declared by its producer; this bean lived here only while there was no producer to hold it.
 
     private fun topic(name: String): NewTopic =
         TopicBuilder.name(name)

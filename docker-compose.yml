@@ -168,6 +168,46 @@ services:
       timeout: 3s
       retries: 5
 
+  # The call media plane. Media never traverses a service, a queue, or a database — the only
+  # server-side involvement in audio and video is this relay, and only when a direct peer-to-peer
+  # path cannot be found.
+  #
+  # `--use-auth-secret` is the TURN REST scheme: coturn accepts any username of the form
+  # `<expiry>:<userId>` whose password is an HMAC of it under the shared secret, so no per-user TURN
+  # account exists and a handed-out credential expires on its own. call-service signs them — the
+  # secret below must match `relay.call.turn.static-auth-secret` there.
+  #
+  # Two things must change for anything but localhost: `--external-ip` has to name the public
+  # address (coturn advertises candidates it cannot otherwise discover behind NAT), and the relay
+  # port range below has to be opened on the firewall. TLS is off because dev has no certificates;
+  # production needs `turns:` on 5349.
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    container_name: coturn
+    restart: unless-stopped
+    command: >
+      turnserver
+      --listening-port=3478
+      --realm=relay
+      --fingerprint
+      --use-auth-secret
+      --static-auth-secret=${TURN_STATIC_AUTH_SECRET:-relay-turn-dev-secret}
+      --min-port=49160
+      --max-port=49200
+      --no-tls
+      --no-dtls
+      --no-cli
+      --log-file=stdout
+      --simple-log
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      # Relay candidates are allocated in this range. Narrow on purpose: Docker publishes each port
+      # individually, and the default 49152-65535 would be sixteen thousand of them.
+      - "49160-49200:49160-49200/udp"
+    networks:
+      - relay-network
+
 volumes:
   kafka_data:
   keycloak_postgres_data:

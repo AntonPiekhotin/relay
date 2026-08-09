@@ -1,6 +1,8 @@
 package com.relay.websocket.input.event
 
 import com.relay.common.event.CallSignalEvent
+import com.relay.common.event.CallSignalKeys
+import com.relay.common.event.CallSignalVerbs
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
@@ -17,7 +19,6 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlin.test.assertTrue
 import kotlin.test.fail
 import org.apache.kafka.clients.consumer.Consumer
 import org.apache.kafka.clients.consumer.ConsumerConfig
@@ -324,6 +325,106 @@ class KafkaEventConsumerIT {
             assertEquals("call-1", signal.callId)
             assertEquals("offer", signal.signal["kind"])
         }
+    }
+
+    @Test
+    fun `an excluded session is skipped while the user's other devices are reached`() {
+        val answering = sessionFor("bob-multi-call")
+        val other = sessionFor("bob-multi-call")
+
+        publish(
+            KafkaTopics.CALL_SIGNAL,
+            CallSignalEvent(
+                callId = "call-cancel",
+                fromUserId = "bob-multi-call",
+                signal = mapOf(CallSignalKeys.VERB to CallSignalVerbs.CANCEL),
+                recipientIds = listOf("bob-multi-call"),
+                excludeSessionIds = listOf(answering.sessionId)
+            )
+        )
+
+        assertEquals(
+            CallSignalVerbs.CANCEL,
+            assertIs<OutboundFrame.CallSignal>(other.nextFrame()).signal[CallSignalKeys.VERB]
+        )
+
+        // The terminal marker arriving first proves nothing was queued to the answering device.
+        answering.complete()
+        assertEquals(
+            RelaySession.Outbound.Completed,
+            answering.awaitOutbound(),
+            "the device that just answered must not be told to cancel"
+        )
+    }
+
+    @Test
+    fun `an invite for an offline callee becomes a push request`() {
+        val ringExpiresAt = Instant.parse("2026-07-26T10:00:40Z")
+
+        publish(
+            KafkaTopics.CALL_SIGNAL,
+            CallSignalEvent(
+                callId = "call-offline",
+                fromUserId = "alice-caller",
+                signal = mapOf(
+                    CallSignalKeys.VERB to CallSignalVerbs.INVITE,
+                    CallSignalKeys.MEDIA to "video",
+                    CallSignalKeys.SDP to "v=0",
+                    CallSignalKeys.RING_EXPIRES_AT to ringExpiresAt.toString()
+                ),
+                recipientIds = listOf("bob-offline-call")
+            )
+        )
+
+        val (key, request) = requestedNotifications().single()
+        assertEquals("bob-offline-call", key, "keyed by recipient, like every other push request")
+        assertEquals(NotificationRequestedEvent.KIND_INCOMING_CALL, request.kind)
+        assertEquals("call-offline", request.payload[NotificationRequestedEvent.KEY_CALL_ID])
+        assertEquals("alice-caller", request.payload[NotificationRequestedEvent.KEY_CALLER_ID])
+        assertEquals("video", request.payload[NotificationRequestedEvent.KEY_MEDIA])
+        assertEquals(
+            ringExpiresAt.toString(),
+            request.payload[NotificationRequestedEvent.KEY_RING_EXPIRES_AT],
+            "a call push that arrives after the ring deadline must not raise an answer button"
+        )
+    }
+
+    @Test
+    fun `a callee with a live socket is rung by frame and not by push`() {
+        val bob = sessionFor("bob-online-call")
+
+        publish(
+            KafkaTopics.CALL_SIGNAL,
+            CallSignalEvent(
+                callId = "call-online",
+                fromUserId = "alice-caller-2",
+                signal = mapOf(
+                    CallSignalKeys.VERB to CallSignalVerbs.INVITE,
+                    CallSignalKeys.MEDIA to "audio",
+                    CallSignalKeys.RING_EXPIRES_AT to "2026-07-26T10:00:40Z"
+                ),
+                recipientIds = listOf("bob-online-call")
+            )
+        )
+
+        assertIs<OutboundFrame.CallSignal>(bob.nextFrame())
+        assertNoRequestedNotifications()
+    }
+
+    @Test
+    fun `no push is requested for verbs other than an invite`() {
+        publish(
+            KafkaTopics.CALL_SIGNAL,
+            CallSignalEvent(
+                callId = "call-hangup",
+                fromUserId = "alice-caller-3",
+                signal = mapOf(CallSignalKeys.VERB to CallSignalVerbs.HANGUP),
+                // Offline on purpose: only the verb decides, not reachability.
+                recipientIds = listOf("bob-offline-hangup")
+            )
+        )
+
+        assertNoRequestedNotifications()
     }
 
     @Test

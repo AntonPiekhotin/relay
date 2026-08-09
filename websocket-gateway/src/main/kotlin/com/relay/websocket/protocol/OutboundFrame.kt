@@ -15,6 +15,13 @@ object ErrorCodes {
 
     /** The send could not be handed off. Retry the same id over REST. */
     const val SEND_FAILED = "SEND_FAILED"
+
+    /**
+     * A call signal could not be delivered to call-service — it was unreachable, timed out, or
+     * failed in a way that has no more specific code. The call cannot proceed; tear down the
+     * peer connection rather than retrying a signal whose ordering has already been lost.
+     */
+    const val CALL_SIGNAL_FAILED = "CALL_SIGNAL_FAILED"
 }
 
 /**

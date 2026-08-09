@@ -204,4 +204,66 @@ class NotificationRequestConsumerIT {
             assertEquals(1, pushSender.sent.size)
         }
     }
+
+    // ---- calls ----
+
+    @Test
+    fun `an incoming call is pushed data-only so the client can raise its own call UI`() {
+        register("ivan", "ivan-phone")
+        val ringExpiresAt = Instant.parse("2026-07-27T10:00:40Z")
+
+        publish(
+            NotificationRequestedEvent.incomingCall(
+                recipientId = "ivan",
+                callId = "call-1",
+                callerId = "alice",
+                media = "video",
+                requestedAt = Instant.parse("2026-07-27T10:00:00Z"),
+                ringExpiresAt = ringExpiresAt
+            )
+        )
+
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted {
+            assertEquals(1, pushSender.sent.size)
+        }
+        val message = pushSender.sent.single().second
+        assertTrue(
+            message.dataOnly,
+            "a notification block would let the OS draw a banner instead of the app ringing"
+        )
+        assertEquals(NotificationRequestedEvent.KIND_INCOMING_CALL, message.data["kind"])
+        assertEquals("call-1", message.data["callId"])
+        assertEquals("alice", message.data["callerId"])
+        assertEquals("video", message.data["media"])
+        assertEquals(
+            ringExpiresAt.toString(),
+            message.data["ringExpiresAt"],
+            "the client must be able to discard a push that arrives after the ring deadline"
+        )
+    }
+
+    @Test
+    fun `a missed call is an ordinary visible alert`() {
+        register("julia", "julia-phone")
+
+        publish(
+            NotificationRequestedEvent.missedCall(
+                recipientId = "julia",
+                callId = "call-2",
+                callerId = "alice",
+                media = "audio",
+                requestedAt = Instant.parse("2026-07-27T10:00:40Z")
+            )
+        )
+
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted {
+            assertEquals(1, pushSender.sent.size)
+        }
+        val message = pushSender.sent.single().second
+        assertTrue(!message.dataOnly, "it happened already — there is nothing to answer")
+        assertEquals("Missed call", message.title)
+        assertEquals(NotificationRequestedEvent.KIND_MISSED_CALL, message.data["kind"])
+        assertEquals("call-2", message.data["callId"])
+        assertEquals("alice", message.data["callerId"])
+    }
 }

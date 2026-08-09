@@ -5,11 +5,18 @@ import com.relay.notification.model.DeviceToken
 /**
  * A push notification ready for transport: [title]/[body] for the visible part, [data] for what
  * the app reads when the user taps through (dialogId, messageId, ...).
+ *
+ * [dataOnly] suppresses the visible part, and it exists for calls. When a `notification` block is
+ * present and the app is backgrounded, the Android SDK displays the banner itself and never calls
+ * the app's message handler — so the app cannot raise a full-screen incoming-call UI with answer and
+ * decline actions. Sending data only hands that decision back to the client. A plain chat message
+ * wants the opposite, which is why this defaults to false.
  */
 data class PushMessage(
     val title: String,
     val body: String,
-    val data: Map<String, String>
+    val data: Map<String, String>,
+    val dataOnly: Boolean = false
 )
 
 enum class PushResult {

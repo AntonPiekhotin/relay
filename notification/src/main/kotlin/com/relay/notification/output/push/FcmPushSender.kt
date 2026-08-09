@@ -1,6 +1,8 @@
 package com.relay.notification.output.push
 
 import com.google.firebase.messaging.AndroidConfig
+import com.google.firebase.messaging.ApnsConfig
+import com.google.firebase.messaging.Aps
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingException
 import com.google.firebase.messaging.Message
@@ -55,12 +57,29 @@ class FcmPushSender(
     private fun fcmMessage(fcmToken: String, message: PushMessage): Message =
         Message.builder()
             .setToken(fcmToken)
-            .setNotification(
-                Notification.builder()
-                    .setTitle(message.title)
-                    .setBody(message.body)
-                    .build()
-            )
+            .apply {
+                // Omitted for a data-only message so the Android SDK hands the payload to the app
+                // instead of drawing its own banner — see PushMessage.dataOnly.
+                if (!message.dataOnly) {
+                    setNotification(
+                        Notification.builder()
+                            .setTitle(message.title)
+                            .setBody(message.body)
+                            .build()
+                    )
+                } else {
+                    // Without `content-available` a data-only push does not wake a backgrounded iOS
+                    // app at all. It still cannot raise a call UI on a locked device — that needs
+                    // PushKit over APNs, which this service has no client for. See docs/ARCHITECTURE.md §7.
+                    setApnsConfig(
+                        ApnsConfig.builder()
+                            .putHeader("apns-push-type", "background")
+                            .putHeader("apns-priority", "5")
+                            .setAps(Aps.builder().setContentAvailable(true).build())
+                            .build()
+                    )
+                }
+            }
             .putAllData(message.data)
             // Chat is latency-sensitive; HIGH lets Android wake the app from doze.
             .setAndroidConfig(AndroidConfig.builder().setPriority(AndroidConfig.Priority.HIGH).build())
