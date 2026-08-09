@@ -9,6 +9,7 @@ import com.relay.common.dto.ResponseErrorDto
 import com.relay.websocket.protocol.ErrorCodes
 import com.relay.websocket.util.CallClientProperties
 import org.slf4j.LoggerFactory
+import org.springframework.cloud.client.loadbalancer.LoadBalanced
 import org.springframework.http.HttpStatusCode
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
@@ -22,7 +23,7 @@ import org.springframework.web.client.RestClientResponseException
  */
 @Component
 class HttpCallClient(
-    loadBalancedRestClientBuilder: RestClient.Builder,
+    @LoadBalanced loadBalancedRestClientBuilder: RestClient.Builder,
     properties: CallClientProperties
 ) : CallClient {
 
