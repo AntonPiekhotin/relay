@@ -43,12 +43,8 @@ class KafkaEventProducer(
         )
     }
 
-    /** Direct publish for outcomes with no transaction to wait for (duplicates, rejections). */
     fun publish(event: MessageDeliveryEvent) {
-        val key = when (event) {
-            is MessageDeliveryEvent.Accepted -> event.dialogId
-            is MessageDeliveryEvent.Rejected -> event.senderId
-        }
+        val key = event.getKey()
         kafkaTemplate.send(KafkaTopics.MESSAGES_DELIVERY, key, jsonMapper.writeValueAsString(event))
             .whenComplete { _, ex ->
                 if (ex != null) {
@@ -57,5 +53,13 @@ class KafkaEventProducer(
                     logger.debug("Announced {} for key {}", event::class.simpleName, key)
                 }
             }
+    }
+
+    private fun MessageDeliveryEvent.getKey(): String {
+        return when (this) {
+            is MessageDeliveryEvent.Accepted -> dialogId
+            is MessageDeliveryEvent.Rejected -> senderId
+            is MessageDeliveryEvent.Read -> dialogId
+        }
     }
 }

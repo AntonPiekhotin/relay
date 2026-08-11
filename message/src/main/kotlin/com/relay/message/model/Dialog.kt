@@ -53,7 +53,10 @@ class Dialog(
     val participantIds: MutableSet<String> = mutableSetOf(),
 
     @Column(name = "created_at", nullable = false, updatable = false)
-    val createdAt: Instant = Instant.now()
+    val createdAt: Instant = Instant.now(),
+
+    @Column(name = "last_message_at")
+    var lastMessageAt: Instant? = null
 ) {
 
     companion object {

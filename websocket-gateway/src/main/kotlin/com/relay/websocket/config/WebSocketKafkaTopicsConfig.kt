@@ -21,19 +21,13 @@ class WebSocketKafkaTopicsConfig {
     fun messagesIncomingTopic(): NewTopic = topic(KafkaTopics.MESSAGES_INCOMING)
 
     @Bean
+    fun messagesReadTopic(): NewTopic = topic(KafkaTopics.MESSAGES_READ)
+
+    @Bean
     fun notificationsTopic(): NewTopic = topic(KafkaTopics.NOTIFICATIONS)
 
-    /**
-     * Consumed here but produced by nobody yet: notification-service handles the push half of
-     * the socket-XOR-push decision and never publishes the in-app half back. Declared anyway so
-     * the subscription has a correctly partitioned topic the day a producer appears, rather than
-     * silently binding to a one-partition topic the broker invented.
-     */
     @Bean
     fun notificationsDeliveryTopic(): NewTopic = topic(KafkaTopics.NOTIFICATIONS_DELIVERY)
-
-    // `call.signal` is consumed here but declared by call-service, which produces it. A topic is
-    // declared by its producer; this bean lived here only while there was no producer to hold it.
 
     private fun topic(name: String): NewTopic =
         TopicBuilder.name(name)

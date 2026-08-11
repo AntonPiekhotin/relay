@@ -46,6 +46,11 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
+relay:
+  message:
+    history-page-size: 50
+    max-history-page-size: 100
+
 eureka:
   instance:
     lease-renewal-interval-in-seconds: 5

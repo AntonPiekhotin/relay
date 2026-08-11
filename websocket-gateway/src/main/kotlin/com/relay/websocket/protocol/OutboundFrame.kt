@@ -53,6 +53,13 @@ sealed interface OutboundFrame {
         val createdAt: Instant
     ) : OutboundFrame
 
+    data class MessageRead(
+        val dialogId: String,
+        val userId: String,
+        val upToMessageId: String,
+        val readAt: Instant
+    ) : OutboundFrame
+
     data class Notification(
         val notificationId: String,
         val kind: String,

@@ -42,6 +42,8 @@ class FrameCodec {
 
     private data class MessageSendPayload(val dialogId: String? = null, val text: String? = null)
 
+    private data class MessageReadPayload(val dialogId: String? = null, val upToMessageId: String? = null)
+
     private data class CallInvitePayload(
         val callId: String? = null,
         val calleeId: String? = null,
@@ -78,6 +80,7 @@ class FrameCodec {
         return when (envelope.type) {
             "ping" -> InboundFrame.Ping(envelope.id, envelope.ts)
             "message.send" -> messageSend(envelope)
+            "message.read" -> messageRead(envelope)
             "call.invite" -> callInvite(envelope)
             "call.accept" -> callAccept(envelope)
             "call.reject" -> callReject(envelope)
@@ -103,6 +106,17 @@ class FrameCodec {
                 ?: throw FrameDecodeException(ErrorCodes.BAD_FRAME, "payload.dialog_id is required", id),
             text = payload.text?.takeIf { it.isNotBlank() }
                 ?: throw FrameDecodeException(ErrorCodes.BAD_FRAME, "payload.text is required", id)
+        )
+    }
+
+    private fun messageRead(envelope: Envelope): InboundFrame.MessageRead {
+        val id = requireEnvelopeId(envelope, "message.read")
+        val payload = payload(envelope, id, "message.read", MessageReadPayload::class.java)
+        return InboundFrame.MessageRead(
+            id = id,
+            ts = envelope.ts,
+            dialogId = payload.dialogId.required("dialog_id", id),
+            upToMessageId = payload.upToMessageId.required("up_to_message_id", id)
         )
     }
 
@@ -184,6 +198,7 @@ class FrameCodec {
             is OutboundFrame.Pong -> "pong"
             is OutboundFrame.Ack -> "ack"
             is OutboundFrame.MessageNew -> "message.new"
+            is OutboundFrame.MessageRead -> "message.read"
             is OutboundFrame.Notification -> "notification.new"
             is OutboundFrame.CallSignal -> "call.signal"
             is OutboundFrame.Error -> "error"

@@ -54,8 +54,21 @@ class KafkaEventConsumer(
                 }
             }
             is MessageDeliveryEvent.Rejected -> handleRejectedMessage(event)
-
+            is MessageDeliveryEvent.Read -> sendReadReceipt(event)
         }
+    }
+
+    private fun sendReadReceipt(event: MessageDeliveryEvent.Read) {
+        dispatcher.deliverToUsersExcept(
+            event.recipientIds,
+            setOf(event.readerSessionId),
+            OutboundFrame.MessageRead(
+                dialogId = event.dialogId,
+                userId = event.readerId,
+                upToMessageId = event.upToMessageId,
+                readAt = event.lastReadAt
+            )
+        )
     }
 
     private fun sendAckToMessageSender(event: MessageDeliveryEvent.Accepted) {

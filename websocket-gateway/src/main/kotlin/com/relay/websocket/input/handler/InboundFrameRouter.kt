@@ -5,6 +5,7 @@ import com.relay.common.dto.HangupCallRequest
 import com.relay.common.dto.IceCandidateRequest
 import com.relay.common.dto.InviteCallRequest
 import com.relay.common.dto.RejectCallRequest
+import com.relay.common.event.MarkReadCommand
 import com.relay.common.event.SendMessageCommand
 import com.relay.websocket.output.event.MessageEventProducer
 import com.relay.websocket.output.http.CallClient
@@ -49,6 +50,7 @@ class InboundFrameRouter(
         when (frame) {
             is InboundFrame.Ping -> session.send(OutboundFrame.Pong(frame.id))
             is InboundFrame.MessageSend -> send(session, frame)
+            is InboundFrame.MessageRead -> read(session, frame)
             is InboundFrame.CallInvite -> signal(session, frame.id) {
                 callClient.invite(
                     InviteCallRequest(
@@ -128,5 +130,16 @@ class InboundFrameRouter(
                 )
             }
         }
+    }
+
+    private fun read(session: RelaySession, frame: InboundFrame.MessageRead) {
+        messageEventProducer.publishRead(
+            MarkReadCommand(
+                dialogId = frame.dialogId,
+                readerId = session.userId,
+                readerSessionId = session.sessionId,
+                upToMessageId = frame.upToMessageId
+            )
+        )
     }
 }

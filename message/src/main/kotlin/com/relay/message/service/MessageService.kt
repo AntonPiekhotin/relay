@@ -5,10 +5,10 @@ import com.relay.common.dto.SendMessageRequest
 import com.relay.common.exception.RelayException
 import com.relay.message.model.dto.event.MessagePersisted
 import com.relay.message.util.mapper.toResponse
+import com.relay.message.util.toUuidOrBadRequest
 import com.relay.message.model.Message
 import com.relay.message.repository.DialogRepository
 import com.relay.message.repository.MessageRepository
-import java.util.UUID
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
@@ -34,7 +34,7 @@ class MessageService(
      */
     @Transactional
     fun send(request: SendMessageRequest, senderSessionId: String? = null): SendResult {
-        val dialogId = request.dialogId.toUuid("dialogId")
+        val dialogId = request.dialogId.toUuidOrBadRequest("dialogId")
         val dialog = dialogRepository.findById(dialogId).orElseThrow {
             RelayException(HttpStatus.NOT_FOUND.value(), "Dialog ${request.dialogId} not found")
         }
@@ -60,19 +60,23 @@ class MessageService(
                 clientMessageId = request.clientMessageId
             )
         )
+        val recipientIds = dialog.participantIds.toSet()
+
+        // What the dialog list is ordered by, moved in the same transaction as the insert it
+        // describes, so the two cannot disagree: a committed message always has a `last_message_at`
+        // at least as recent as itself.
+        //
+        // Read the guarded UPDATE in the repository before touching this. It also takes a row lock
+        // on the dialog for the rest of the transaction, which serializes concurrent sends to the
+        // same conversation — harmless here, because `messages.incoming` is keyed by dialogId and one
+        // dialog's sends are already handled sequentially by a single consumer thread.
+        dialogRepository.touchLastMessageAt(dialogId, saved.sentAt)
 
         // Published only after the transaction commits, so a rolled-back send is never announced.
         // Recipients include the sender: their other devices need the message too.
-        events.publishEvent(MessagePersisted(saved, dialog.participantIds.toSet(), senderSessionId))
-        return SendResult(saved.toResponse(), dialog.participantIds.toSet(), created = true)
+        events.publishEvent(MessagePersisted(saved, recipientIds, senderSessionId))
+        return SendResult(saved.toResponse(), recipientIds, created = true)
     }
-
-    private fun String.toUuid(field: String): UUID =
-        try {
-            UUID.fromString(this)
-        } catch (ex: IllegalArgumentException) {
-            throw RelayException(HttpStatus.BAD_REQUEST.value(), "$field is not a valid id: $this", ex)
-        }
 }
 
 /** [created] is false when an existing message was returned for a repeated clientMessageId. */

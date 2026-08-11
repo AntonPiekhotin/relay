@@ -22,7 +22,7 @@ import java.util.UUID
     uniqueConstraints = [
         UniqueConstraint(name = "uk_messages_sender_client_id", columnNames = ["sender_id", "client_message_id"])
     ],
-    indexes = [Index(name = "ix_messages_dialog_sent_at", columnList = "dialog_id, sent_at")]
+    indexes = [Index(name = "ix_messages_dialog_sent_at_id", columnList = "dialog_id, sent_at desc, id desc")]
 )
 class Message(
 

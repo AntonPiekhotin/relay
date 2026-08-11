@@ -1,6 +1,7 @@
 package com.relay.websocket.output.event
 
 import com.relay.common.event.KafkaTopics
+import com.relay.common.event.MarkReadCommand
 import com.relay.common.event.SendMessageCommand
 import java.util.concurrent.CompletableFuture
 import org.slf4j.LoggerFactory
@@ -9,10 +10,10 @@ import org.springframework.stereotype.Component
 import tools.jackson.databind.json.JsonMapper
 
 /**
- * Owns the gateway's side of the `messages.incoming` contract: topic,
- * partition key, and serialization live here, not in the frame router.
+ * Owns the gateway's side of the `messages.incoming` and `messages.read` contracts: topics,
+ * partition keys, and serialization live here, not in the frame router.
  *
- * Keyed by dialog so a conversation's sends stay ordered within one partition.
+ * Both are keyed by dialog so a conversation's commands stay ordered within one partition.
  */
 @Component
 class MessageEventProducer(
@@ -41,4 +42,19 @@ class MessageEventProducer(
                 logger.debug("Queued send {} for dialog {}", command.clientMessageId, command.dialogId)
                 null
             }
+
+    fun publishRead(command: MarkReadCommand) {
+        kafkaTemplate
+            .send(KafkaTopics.MESSAGES_READ, command.dialogId, jsonMapper.writeValueAsString(command))
+            .whenComplete { _, ex ->
+                if (ex != null) {
+                    logger.error(
+                        "Could not queue read of dialog {} up to {} from session {}",
+                        command.dialogId, command.upToMessageId, command.readerSessionId, ex
+                    )
+                } else {
+                    logger.debug("Queued read of dialog {} up to {}", command.dialogId, command.upToMessageId)
+                }
+            }
+    }
 }

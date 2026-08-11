@@ -2,6 +2,7 @@ package com.relay.message.input.event
 
 import com.relay.common.dto.SendMessageRequest
 import com.relay.common.event.KafkaTopics
+import com.relay.common.event.MarkReadCommand
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.SendMessageCommand
 import com.relay.common.exception.RelayException
@@ -9,6 +10,7 @@ import com.relay.message.output.event.KafkaEventProducer
 import com.relay.message.util.mapper.toResponse
 import com.relay.message.repository.MessageRepository
 import com.relay.message.service.MessageService
+import com.relay.message.service.ReadStateService
 import com.relay.message.service.SendResult
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
@@ -18,12 +20,15 @@ import org.springframework.stereotype.Component
 import tools.jackson.databind.json.JsonMapper
 
 /**
- * The WebSocket send path: consumes client sends from `messages.incoming`, persists through the
- * same [MessageService] the REST fallback uses, and answers with an Accepted/Rejected event on
- * `messages.delivery`.
+ * The two things a client does over the socket that this service owns.
  *
- * Every outcome — success, duplicate, rejection — produces a delivery event. A send that
- * produced no event would leave the client's message stuck in "sending" until its timeout.
+ * **Sends** (`messages.incoming`) persist through the same [MessageService] the REST fallback uses
+ * and answer with an Accepted/Rejected event on `messages.delivery`. Every outcome — success,
+ * duplicate, rejection — produces one. A send that produced no event would leave the client's
+ * message stuck in "sending" until its timeout.
+ *
+ * **Reads** (`messages.read`) move a cursor and answer with a receipt, or with nothing at all. The
+ * asymmetry with sends is deliberate and explained on [onMarkReadCommand].
  *
  * Shared consumer group: message-service instances compete for partitions, which is correct
  * here (each command must be processed once) — unlike the gateway's broadcast groups.
@@ -32,6 +37,7 @@ import tools.jackson.databind.json.JsonMapper
 class KafkaEventConsumer(
     private val messageService: MessageService,
     private val messageRepository: MessageRepository,
+    private val readStateService: ReadStateService,
     private val eventProducer: KafkaEventProducer,
     private val jsonMapper: JsonMapper
 ) {
@@ -44,12 +50,7 @@ class KafkaEventConsumer(
         concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
     )
     fun onSendCommand(raw: String) {
-        val command = try {
-            jsonMapper.readValue(raw, SendMessageCommand::class.java)
-        } catch (ex: Exception) {
-            logger.error("Skipping malformed send command: {}", raw.take(512), ex)
-            return
-        }
+        val command = parseCommand<SendMessageCommand>(raw) ?: return
         try {
             val result = messageService.send(command.toRequest(), command.senderSessionId)
             if (result.alreadyExists()) {
@@ -119,6 +120,37 @@ class KafkaEventConsumer(
                 duplicate = true
             )
         )
+    }
+
+    @KafkaListener(
+        topics = [KafkaTopics.MESSAGES_READ],
+        groupId = "message-service",
+        concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
+    )
+    fun onMarkReadCommand(raw: String) {
+        val command = parseCommand<MarkReadCommand>(raw) ?: return
+        try {
+            readStateService.markRead(command)?.let {
+                eventProducer.publish(it)
+            }
+        } catch (ex: RelayException) {
+            logger.warn(
+                "Read command from {} for dialog {} rejected: {}",
+                command.readerId, command.dialogId, ex.message
+            )
+        } catch (ex: Exception) {
+            logger.error(
+                "Read command from {} for dialog {} failed unexpectedly",
+                command.readerId, command.dialogId, ex
+            )
+        }
+    }
+
+    private inline fun <reified T> parseCommand(raw: String): T? = try {
+        jsonMapper.readValue(raw, T::class.java)
+    } catch (ex: Exception) {
+        logger.error("Skipping malformed read command: {}", raw.take(512), ex)
+        return null
     }
 
     private fun SendMessageCommand.toRequest() = SendMessageRequest(

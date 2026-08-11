@@ -47,6 +47,25 @@ class FrameCodecTest {
     }
 
     @Test
+    fun `encodes a read receipt naming whose cursor moved`() {
+        val json = codec.encode(
+            OutboundFrame.MessageRead(
+                dialogId = "d-1",
+                userId = "bob",
+                upToMessageId = "m-9",
+                readAt = Instant.parse("2026-07-26T10:00:00Z")
+            )
+        )
+
+        // Same type string as the inbound frame; the direction decides the shape.
+        assertTrue(json.contains("\"type\":\"message.read\""), "was: $json")
+        assertTrue(json.contains("\"dialog_id\":\"d-1\""), "was: $json")
+        assertTrue(json.contains("\"user_id\":\"bob\""), "outbound has to say whose cursor; was: $json")
+        assertTrue(json.contains("\"up_to_message_id\":\"m-9\""), "was: $json")
+        assertTrue(json.contains("\"read_at\":\"2026-07-26T10:00:00Z\""), "was: $json")
+    }
+
+    @Test
     fun `encodes errors with ref_id so the client can match the failed action`() {
         val json = codec.encode(OutboundFrame.Error(ErrorCodes.SEND_FAILED, "boom", refId = "c-9"))
 
@@ -67,6 +86,28 @@ class FrameCodecTest {
         assertEquals("c-1", send.id)
         assertEquals("d-1", send.dialogId)
         assertEquals("hello", send.text)
+    }
+
+    @Test
+    fun `decodes message-read as a cursor position`() {
+        val frame = codec.decode(
+            """{"v":1,"type":"message.read","id":"r-1","ts":1730000000000,
+                "payload":{"dialog_id":"d-1","up_to_message_id":"m-9"}}"""
+        )
+
+        val read = assertIs<InboundFrame.MessageRead>(frame)
+        assertEquals("r-1", read.id)
+        assertEquals("d-1", read.dialogId)
+        assertEquals("m-9", read.upToMessageId)
+    }
+
+    @Test
+    fun `rejects a read missing its cursor, attributing the failure to the frame`() {
+        val failure = decodeFailure("""{"v":1,"type":"message.read","id":"r-1","payload":{"dialog_id":"d-1"}}""")
+
+        assertEquals(ErrorCodes.BAD_FRAME, failure.code)
+        assertEquals("r-1", failure.refId)
+        assertTrue(failure.message.contains("up_to_message_id"), "was: ${failure.message}")
     }
 
     @Test

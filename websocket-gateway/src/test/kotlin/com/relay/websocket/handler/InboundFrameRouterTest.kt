@@ -6,6 +6,7 @@ import com.relay.common.dto.IceCandidateRequest
 import com.relay.common.dto.InviteCallRequest
 import com.relay.common.dto.RejectCallRequest
 import com.relay.common.event.KafkaTopics
+import com.relay.common.event.MarkReadCommand
 import com.relay.common.event.SendMessageCommand
 import com.relay.common.model.UserPrincipal
 import com.relay.websocket.input.handler.InboundFrameRouter
@@ -90,6 +91,46 @@ class InboundFrameRouterTest {
         assertEquals("alice", command.senderId, "a client must not be able to send as someone else")
         assertEquals("c-1", command.clientMessageId)
         assertEquals("s-1", command.senderSessionId, "the ack must find its way back to this device")
+    }
+
+    @Test
+    fun `queues a read with the reader taken from the session, not the frame`() {
+        queueSucceeds()
+        val session = session(userId = "alice")
+
+        // As with a send, the payload tries to name somebody else and must be ignored — otherwise a
+        // client could clear another person's unread state and fake their read ticks.
+        router.route(
+            session,
+            """{"v":1,"type":"message.read","id":"r-1",
+                "payload":{"dialog_id":"d-1","up_to_message_id":"m-9","user_id":"mallory"}}"""
+        )
+
+        val value = ArgumentCaptor.forClass(String::class.java)
+        verify(kafkaTemplate).send(eq(KafkaTopics.MESSAGES_READ), eq("d-1"), value.capture())
+        val command = jsonMapper.readValue(value.value, MarkReadCommand::class.java)
+        assertEquals("alice", command.readerId, "a client must not be able to read as someone else")
+        assertEquals("d-1", command.dialogId)
+        assertEquals("m-9", command.upToMessageId)
+        assertEquals("s-1", command.readerSessionId, "the receipt must skip the device that read")
+    }
+
+    @Test
+    fun `a read that cannot be queued is silent - unlike a send`() {
+        // A send tells the client to retry over REST, because the message is still in its outbox.
+        // A read has no outbox and no ack: the next read supersedes this one, so a failed hand-off is
+        // logged and nothing reaches the client.
+        `when`(kafkaTemplate.send(anyString(), anyString(), anyString()))
+            .thenReturn(CompletableFuture.failedFuture(IllegalStateException("broker down")))
+        val session = session()
+
+        router.route(
+            session,
+            """{"v":1,"type":"message.read","id":"r-1","payload":{"dialog_id":"d-1","up_to_message_id":"m-9"}}"""
+        )
+
+        session.complete()
+        assertEquals(RelaySession.Outbound.Completed, session.awaitOutbound())
     }
 
     @Test

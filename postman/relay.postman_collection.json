@@ -103,6 +103,31 @@
     {
       "key": "longName",
       "value": ""
+    },
+    {
+      "key": "historyDialogId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "firstMessageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "lastMessageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "historyCursor",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "foreignDialogId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -2124,6 +2149,705 @@
                 "api",
                 "v1",
                 "messages"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3.1 History, dialog list and read state (through api-gateway)",
+      "description": "The client-facing read surface of message-service (PROTOCOL.md 5.1). Cursor pagination in both directions, the dialog list that makes a conversation discoverable by the other person, and the per-caller unread count.\n\nRead state itself is moved by the `message.read` frame over the socket, not by REST, so it has no request here — what it produces is the `unreadCount` these endpoints return. Run 1. Auth first; these need both users to exist.",
+      "item": [
+        {
+          "name": "Open direct dialog A -> B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 or 200 - a repeat open is not an error', () =>",
+                  "  pm.expect([200, 201]).to.include(pm.response.code));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('historyDialogId', json.id);",
+                  "pm.test('keyed on the pair, so both are participants', () => {",
+                  "  pm.expect(json.participantIds).to.include(pm.collectionVariables.get('userIdA'));",
+                  "  pm.expect(json.participantIds).to.include(pm.collectionVariables.get('userIdB'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"peerId\": \"{{userIdB}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs"
+              ]
+            },
+            "description": "The client-facing open (PROTOCOL.md 5.4). Note the id key here is `id`; the list and history endpoints call the same value `dialogId`."
+          }
+        },
+        {
+          "name": "Send three messages as A (over /internal, standing in for the socket)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('firstMessageId', pm.response.json().id);",
+                  "",
+                  "// Two more, so there is something to page through. The socket is the real send path;",
+                  "// this is the same MessageService, so history cannot tell the difference.",
+                  "const send = (text, cb) => pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('messageServiceUrl') + '/internal/api/v1/messages',",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({",
+                  "    clientMessageId: '' + Math.random(),",
+                  "    dialogId: pm.collectionVariables.get('historyDialogId'),",
+                  "    senderId: pm.collectionVariables.get('userIdA'),",
+                  "    text: text",
+                  "  }) }",
+                  "}, (err, res) => cb(res));",
+                  "",
+                  "send('message two', () => send('message three', (res) => {",
+                  "  pm.collectionVariables.set('lastMessageId', res.json().id);",
+                  "  console.log('lastMessageId =', res.json().id);",
+                  "}));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientMessageId\": \"{{$guid}}\",\n  \"dialogId\": \"{{historyDialogId}}\",\n  \"senderId\": \"{{userIdA}}\",\n  \"text\": \"message one\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/internal/api/v1/messages",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "internal",
+                "api",
+                "v1",
+                "messages"
+              ]
+            },
+            "description": "Uses the message service directly because there is no client-facing REST send yet (PROTOCOL.md 5.2). `senderId` is trusted here, which is why this path stays /internal."
+          }
+        },
+        {
+          "name": "List my dialogs (A)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "const dialog = json.dialogs.find(d =>",
+                  "  d.dialogId === pm.collectionVariables.get('historyDialogId'));",
+                  "pm.test('the dialog we just used is listed', () => pm.expect(dialog).to.not.be.undefined);",
+                  "pm.test('camelCase keys, unlike the snake_case frames', () => {",
+                  "  pm.expect(dialog).to.have.property('lastMessageAt');",
+                  "  pm.expect(dialog).to.have.property('unreadCount');",
+                  "  pm.expect(dialog).to.have.property('participantIds');",
+                  "});",
+                  "pm.test('a sender has nothing unread in their own conversation', () =>",
+                  "  pm.expect(dialog.unreadCount).to.eql(0));",
+                  "pm.test('lastMessageAt is stamped once something was sent', () =>",
+                  "  pm.expect(dialog.lastMessageAt).to.not.be.null);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs"
+              ]
+            },
+            "description": "Unpaginated and ordered by lastMessageAt, most recent first. This is what makes a conversation discoverable by the other person."
+          }
+        },
+        {
+          "name": "List my dialogs (B) - unread count is per caller",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const dialog = pm.response.json().dialogs.find(d =>",
+                  "  d.dialogId === pm.collectionVariables.get('historyDialogId'));",
+                  "pm.test('B sees the conversation A started', () =>",
+                  "  pm.expect(dialog).to.not.be.undefined);",
+                  "pm.test(\"B's unread count counts A's messages\", () =>",
+                  "  pm.expect(dialog.unreadCount).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenB}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs"
+              ]
+            },
+            "description": "The same dialog, a different count. Unread is derived per caller by counting past that caller's read cursor, never stored."
+          }
+        },
+        {
+          "name": "Newest page of history",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('honours the limit', () => pm.expect(json.messages.length).to.eql(2));",
+                  "pm.test('newest first', () => pm.expect(new Date(json.messages[0].createdAt))",
+                  "  .to.be.at.least(new Date(json.messages[1].createdAt)));",
+                  "pm.test('createdAt, not sentAt - matching the ack and message.new frames', () =>",
+                  "  pm.expect(json.messages[0]).to.have.property('createdAt'));",
+                  "pm.test('a full page offers a cursor', () => pm.expect(json.nextCursor).to.not.be.null);",
+                  "pm.collectionVariables.set('historyCursor', json.nextCursor);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs/{{historyDialogId}}/messages?limit=2",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs",
+                "{{historyDialogId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "2"
+                }
+              ]
+            },
+            "description": "No cursor means the newest page, which is what a chat opens on."
+          }
+        },
+        {
+          "name": "Page back with before=<nextCursor>",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('the cursor is exclusive - it is not repeated on this page', () =>",
+                  "  pm.expect(json.messages.map(m => m.messageId))",
+                  "    .to.not.include(pm.collectionVariables.get('historyCursor')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs/{{historyDialogId}}/messages?before={{historyCursor}}&limit=2",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs",
+                "{{historyDialogId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "before",
+                  "value": "{{historyCursor}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "2"
+                }
+              ]
+            },
+            "description": "Keyset pagination, never offset. The cursor is a message id the client already holds."
+          }
+        },
+        {
+          "name": "Catch up with after=<firstMessageId>",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('oldest first, unlike a before page', () => {",
+                  "  if (json.messages.length > 1) {",
+                  "    pm.expect(new Date(json.messages[0].createdAt))",
+                  "      .to.be.at.most(new Date(json.messages[1].createdAt));",
+                  "  }",
+                  "});",
+                  "pm.test('exclusive of the message the client already had', () =>",
+                  "  pm.expect(json.messages.map(m => m.messageId))",
+                  "    .to.not.include(pm.collectionVariables.get('firstMessageId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs/{{historyDialogId}}/messages?after={{firstMessageId}}&limit=100",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs",
+                "{{historyDialogId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "after",
+                  "value": "{{firstMessageId}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            },
+            "description": "The reconnect path (PROTOCOL.md 7). This is the mechanism that lets socket delivery be lossy: anything missed while disconnected is recovered here."
+          }
+        },
+        {
+          "name": "B reads history - A's clientMsgId is redacted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"another sender's idempotency key is not exposed\", () =>",
+                  "  json.messages.forEach(m => {",
+                  "    if (m.senderId !== pm.collectionVariables.get('userIdB')) {",
+                  "      pm.expect(m.clientMsgId, m.messageId).to.be.oneOf([null, undefined]);",
+                  "    }",
+                  "  }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenB}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs/{{historyDialogId}}/messages?limit=50",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs",
+                "{{historyDialogId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "clientMsgId is only useful for merging against your own outbox, so it is set only on the caller's own messages."
+          }
+        },
+        {
+          "name": "Get one dialog",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('same shape as a list row, keyed dialogId', () =>",
+                  "  pm.expect(json.dialogId).to.eql(pm.collectionVariables.get('historyDialogId')));",
+                  "pm.test('type is lowercase', () => pm.expect(json.type).to.eql('direct'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs/{{historyDialogId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs",
+                "{{historyDialogId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "History of a dialog I am not in (expect 404, not 403)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A dialog between A and somebody who is not B, so this asks for a conversation that",
+                  "// really exists and really is not the caller's. `secondDialogId` will not do: dialogs are",
+                  "// idempotent by pair, so an A+B dialog resolves to the one B is already in.",
+                  "pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('messageServiceUrl') + '/internal/api/v1/dialogs',",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ participantIds: [",
+                  "    pm.collectionVariables.get('userIdA'),",
+                  "    '11111111-1111-1111-1111-111111111111'",
+                  "  ]}) }",
+                  "}, (err, res) => {",
+                  "  if (err) { console.error(err); return; }",
+                  "  pm.collectionVariables.set('foreignDialogId', res.json().id);",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenB}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs/{{foreignDialogId}}/messages",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs",
+                "{{foreignDialogId}}",
+                "messages"
+              ]
+            },
+            "description": "404 rather than 403 on purpose: a 403 would confirm that a guessed dialog id names a real conversation, turning this endpoint into an enumeration oracle. The send path still answers NOT_A_PARTICIPANT, where the client already believes it holds the id."
+          }
+        },
+        {
+          "name": "Both cursors at once (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs/{{historyDialogId}}/messages?before={{firstMessageId}}&after={{firstMessageId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs",
+                "{{historyDialogId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "before",
+                  "value": "{{firstMessageId}}"
+                },
+                {
+                  "key": "after",
+                  "value": "{{firstMessageId}}"
+                }
+              ]
+            },
+            "description": "They are opposite directions from a position; answering one of them silently would hand back a page the client did not ask for."
+          }
+        },
+        {
+          "name": "Cursor that is not a message in this dialog (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs/{{historyDialogId}}/messages?before=11111111-1111-1111-1111-111111111111",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs",
+                "{{historyDialogId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "before",
+                  "value": "11111111-1111-1111-1111-111111111111"
+                }
+              ]
+            },
+            "description": "A cursor must name a message in the dialog being read. Treating an unresolvable one as \"no cursor\" would silently return the newest page instead, which looks like the conversation jumping to the bottom rather than like the bug it is."
+          }
+        },
+        {
+          "name": "Oversized limit is clamped, not rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK, not 400', () => pm.response.to.have.status(200));",
+                  "pm.test('at most the 100-row maximum', () =>",
+                  "  pm.expect(pm.response.json().messages.length).to.be.at.most(100));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessTokenA}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs/{{historyDialogId}}/messages?limit=10000",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs",
+                "{{historyDialogId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10000"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dialog list without a token (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/v1/message/dialogs",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "message",
+                "dialogs"
               ]
             }
           }

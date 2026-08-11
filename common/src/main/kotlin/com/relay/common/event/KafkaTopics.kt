@@ -20,7 +20,26 @@ object KafkaTopics {
     /** Client sends awaiting persistence. websocket-gateway → message-service. */
     const val MESSAGES_INCOMING = "messages.incoming"
 
-    /** Fan-out events after (attempted) persistence. message-service → websocket-gateway. */
+    /**
+     * Read cursors moving forward. websocket-gateway → message-service, keyed by dialogId so a
+     * conversation's reads stay ordered against each other.
+     *
+     * Its own topic rather than a second shape on [MESSAGES_INCOMING]: a read is a different
+     * traffic class from a send, and a backlog of reads must not add lag to message persistence
+     * (`docs/KAFKA.md` §2.1). The receipt going back out does *not* get its own topic — see
+     * [MESSAGES_DELIVERY].
+     */
+    const val MESSAGES_READ = "messages.read"
+
+    /**
+     * Fan-out events after (attempted) persistence, and read receipts. message-service →
+     * websocket-gateway.
+     *
+     * Read receipts share this topic on purpose. Keyed by dialogId like every other event here,
+     * they land in the same partition as the messages they acknowledge, so a receipt can never
+     * overtake the `message.new` it refers to. A separate topic would be two ordering domains for
+     * one conversation, and a client could be told a message was read before being told it exists.
+     */
     const val MESSAGES_DELIVERY = "messages.delivery"
 
     /**

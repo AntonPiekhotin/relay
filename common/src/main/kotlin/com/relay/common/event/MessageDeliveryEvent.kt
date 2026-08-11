@@ -5,14 +5,19 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo
 import java.time.Instant
 
 /**
- * Outcome of a send, published by message-service to `messages.delivery` and consumed by every
- * websocket-gateway instance: every node sees every outcome and delivers to whatever sessions it
- * holds, which is what per-instance consumer groups buy.
+ * What happened to a dialog, published by message-service to `messages.delivery` and consumed by
+ * every websocket-gateway instance: every node sees every event and delivers to whatever sessions
+ * it holds, which is what per-instance consumer groups buy.
+ *
+ * Two of the three cases are the outcome of a send; [Read] is not, and shares the topic anyway
+ * because it is keyed by the same dialogId and must stay ordered against the messages it
+ * acknowledges. See [KafkaTopics.MESSAGES_DELIVERY].
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "outcome")
 @JsonSubTypes(
     JsonSubTypes.Type(value = MessageDeliveryEvent.Accepted::class, name = "ACCEPTED"),
-    JsonSubTypes.Type(value = MessageDeliveryEvent.Rejected::class, name = "REJECTED")
+    JsonSubTypes.Type(value = MessageDeliveryEvent.Rejected::class, name = "REJECTED"),
+    JsonSubTypes.Type(value = MessageDeliveryEvent.Read::class, name = "READ")
 )
 sealed interface MessageDeliveryEvent {
 
@@ -46,5 +51,26 @@ sealed interface MessageDeliveryEvent {
         val senderSessionId: String?,
         val code: String,
         val reason: String
+    ) : MessageDeliveryEvent
+
+    /**
+     * [readerId]'s read cursor in [dialogId] advanced to [upToMessageId], stored at [lastReadAt].
+     * The gateway pushes `message.read` to every session of [recipientIds] except
+     * [readerSessionId] — the device that read already knows, the reader's *other* devices need it
+     * to clear their badge, and the other participants need it to draw read ticks.
+     *
+     * Published only when the cursor actually moved. A stale or repeated command stores nothing and
+     * announces nothing, so a client retrying a read cannot make a receipt fire twice.
+     *
+     * [recipientIds] is the dialog's membership, resolved server-side for the same reason
+     * [Accepted.recipientIds] is: the gateway must never work out who is in a dialog.
+     */
+    data class Read(
+        val dialogId: String,
+        val readerId: String,
+        val readerSessionId: String?,
+        val upToMessageId: String,
+        val lastReadAt: Instant,
+        val recipientIds: List<String>
     ) : MessageDeliveryEvent
 }

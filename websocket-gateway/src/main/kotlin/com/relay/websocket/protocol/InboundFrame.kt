@@ -37,6 +37,13 @@ sealed interface InboundFrame {
         val text: String
     ) : InboundFrame
 
+    data class MessageRead(
+        override val id: String,
+        override val ts: Long? = null,
+        val dialogId: String,
+        val upToMessageId: String
+    ) : InboundFrame
+
     /**
      * Call signaling, one subtype per verb — unlike the single opaque `call.signal` frame going the
      * other way. The asymmetry is deliberate: outbound is a relay, so one type is enough, while
