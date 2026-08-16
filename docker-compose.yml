@@ -177,10 +177,32 @@ services:
   # account exists and a handed-out credential expires on its own. call-service signs them — the
   # secret below must match `relay.call.turn.static-auth-secret` there.
   #
-  # Two things must change for anything but localhost: `--external-ip` has to name the public
-  # address (coturn advertises candidates it cannot otherwise discover behind NAT), and the relay
-  # port range below has to be opened on the firewall. TLS is off because dev has no certificates;
-  # production needs `turns:` on 5349.
+  # `--external-ip` is not optional even here. coturn allocates its relay inside the bridge network
+  # and advertises that address, so without the mapping a client is handed a `172.x` relay candidate
+  # it cannot route to — STUN works and TURN silently never relays. Docker's NAT is still a NAT.
+  # Point it at the public address in production; the relay port range has to be open there too.
+  #
+  # TLS is off because dev has no certificates; production needs `turns:` on 5349. Note that
+  # `--no-tcp-relay` does not conflict with the `turn:...?transport=tcp` URL call-service hands out:
+  # that is the client-to-server leg, which stays available. What it drops is RFC 6062 TCP relay
+  # allocations, which WebRTC never asks for.
+  #
+  # A relay anyone can allocate on is a relay strangers proxy through, so the quotas are a cap
+  # rather than a tuning knob: `--total-quota` matches the 41 relay ports, and `--max-bps` of
+  # 500 KB/s is roughly a 4 Mbps session. `--no-rfc5780`, `--no-stun-backward-compatibility` and
+  # `--response-origin-only-with-rfc5780` switch off STUN features WebRTC does not use and
+  # reflection attacks do. `--secure-stun` is deliberately absent: the `stun:` URL in
+  # `relay.call.turn.urls` is handed out without credentials, and requiring auth would break it.
+  #
+  # 169.254/16 is denied because a relay that can reach cloud metadata hands out IAM credentials to
+  # anyone holding a TURN credential; loopback peers coturn already denies by default. RFC1918 is
+  # deliberately *not* on that list here — behind Docker's NAT every dev peer arrives as a private
+  # address, so denying those ranges would block exactly the local calls this file exists to run.
+  # Add these three wherever coturn is publicly reachable, or it will relay into your own network:
+  #
+  #   --denied-peer-ip=10.0.0.0-10.255.255.255
+  #   --denied-peer-ip=172.16.0.0-172.31.255.255
+  #   --denied-peer-ip=192.168.0.0-192.168.255.255
   coturn:
     image: coturn/coturn:4.6-alpine
     container_name: coturn
@@ -192,8 +214,22 @@ services:
       --fingerprint
       --use-auth-secret
       --static-auth-secret=${TURN_STATIC_AUTH_SECRET:-relay-turn-dev-secret}
+      --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
       --min-port=49160
       --max-port=49200
+      --stale-nonce=600
+      --no-tcp-relay
+      --no-multicast-peers
+      --denied-peer-ip=0.0.0.0-0.255.255.255
+      --denied-peer-ip=169.254.0.0-169.254.255.255
+      --user-quota=4
+      --total-quota=40
+      --max-bps=500000
+      --bps-capacity=6000000
+      --no-rfc5780
+      --no-stun-backward-compatibility
+      --response-origin-only-with-rfc5780
+      --no-software-attribute
       --no-tls
       --no-dtls
       --no-cli
