@@ -10,6 +10,8 @@ import com.relay.common.event.SendMessageCommand
 import com.relay.websocket.output.event.MessageEventProducer
 import com.relay.websocket.output.http.CallClient
 import com.relay.websocket.output.http.CallSignalResult
+import com.relay.websocket.presence.PresenceService
+import com.relay.websocket.presence.PresenceSubscribeResult
 import com.relay.websocket.protocol.ErrorCodes
 import com.relay.websocket.protocol.FrameCodec
 import com.relay.websocket.protocol.FrameDecodeException
@@ -34,7 +36,8 @@ import org.springframework.stereotype.Component
 class InboundFrameRouter(
     private val codec: FrameCodec,
     private val messageEventProducer: MessageEventProducer,
-    private val callClient: CallClient
+    private val callClient: CallClient,
+    private val presenceService: PresenceService
 ) {
 
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -51,6 +54,10 @@ class InboundFrameRouter(
             is InboundFrame.Ping -> session.send(OutboundFrame.Pong(frame.id))
             is InboundFrame.MessageSend -> send(session, frame)
             is InboundFrame.MessageRead -> read(session, frame)
+            is InboundFrame.PresenceSubscribe -> subscribePresence(session, frame)
+            // Both are fire-and-forget: nothing is returned, not even on failure.
+            is InboundFrame.PresenceUnsubscribe -> presenceService.unsubscribe(session, frame.dialogId)
+            is InboundFrame.TypingStart -> presenceService.typing(session, frame.dialogId)
             is InboundFrame.CallInvite -> signal(session, frame.id) {
                 callClient.invite(
                     InviteCallRequest(
@@ -129,6 +136,22 @@ class InboundFrameRouter(
                     OutboundFrame.Error(ErrorCodes.SEND_FAILED, "Message could not be queued", frame.id)
                 )
             }
+        }
+    }
+
+    /**
+     * The one presence frame that answers. A subscription that silently failed would leave the
+     * client waiting for updates that are never coming, with no way to tell that from a peer who
+     * simply has not changed state.
+     *
+     * It blocks on the membership lookup for the same reason a call signal does — this thread is
+     * virtual and the client is bounded by a short timeout.
+     */
+    private fun subscribePresence(session: RelaySession, frame: InboundFrame.PresenceSubscribe) {
+        when (val result = presenceService.subscribe(session, frame.dialogId)) {
+            is PresenceSubscribeResult.Subscribed -> Unit
+            is PresenceSubscribeResult.Rejected ->
+                session.send(OutboundFrame.Error(result.code, result.message, frame.id))
         }
     }
 

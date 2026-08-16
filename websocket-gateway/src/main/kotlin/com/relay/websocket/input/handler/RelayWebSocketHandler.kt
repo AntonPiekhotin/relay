@@ -1,6 +1,7 @@
 package com.relay.websocket.input.handler
 
 import com.relay.common.model.UserPrincipal
+import com.relay.websocket.presence.PresenceService
 import com.relay.websocket.protocol.ACCESS_TOKEN_PROTOCOL
 import com.relay.websocket.protocol.FrameCodec
 import com.relay.websocket.protocol.OutboundFrame
@@ -8,6 +9,7 @@ import com.relay.websocket.security.JwtUserPrincipalMapper
 import com.relay.websocket.session.RelaySession
 import com.relay.websocket.session.SessionRegistry
 import com.relay.websocket.util.WebSocketProperties
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import org.slf4j.LoggerFactory
 import org.springframework.security.core.Authentication
@@ -24,6 +26,7 @@ class RelayWebSocketHandler(
     private val router: InboundFrameRouter,
     private val codec: FrameCodec,
     private val principalMapper: JwtUserPrincipalMapper,
+    private val presenceService: PresenceService,
     private val props: WebSocketProperties
 ) : TextWebSocketHandler(), SubProtocolCapable {
 
@@ -54,12 +57,17 @@ class RelayWebSocketHandler(
         serve(socket, principal)
     }
 
+    /**
+     * `register` reports whether this was the user's *first* session, which is exactly when their
+     * presence changed. A second device connecting is not an event anybody watching needs.
+     */
     private fun serve(socket: WebSocketSession, principal: UserPrincipal) {
         val relaySession = RelaySession(socket.id, principal, props.outboundBufferSize)
         sessions[socket.id] = relaySession
-        registry.register(relaySession)
+        val cameOnline = registry.register(relaySession)
         relaySession.send(OutboundFrame.SessionConnected(principal.userId, socket.id))
         startWriter(socket, relaySession)
+        if (cameOnline) presenceService.announceOnline(principal.userId)
     }
 
     /**
@@ -119,10 +127,17 @@ class RelayWebSocketHandler(
     /**
      * Unregistering completes the outbound stream, which is what stops the writer thread — so a
      * socket that dies while its writer is parked does not leak the thread.
+     *
+     * Its presence subscriptions go first, so a session on its way out is not still on somebody's
+     * fan-out list, and the offline announcement is made only when this was the user's *last*
+     * session — which is what `unregister` decides.
      */
     override fun afterConnectionClosed(socket: WebSocketSession, status: CloseStatus) {
         val relaySession = sessions.remove(socket.id) ?: return
-        registry.unregister(relaySession)
+        presenceService.forget(relaySession)
+        if (registry.unregister(relaySession)) {
+            presenceService.announceOffline(relaySession.userId, Instant.now())
+        }
         logger.debug(
             "Closed session {} for user {} ({})",
             socket.id, relaySession.userId, status

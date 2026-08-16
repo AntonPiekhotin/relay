@@ -44,6 +44,9 @@ class FrameCodec {
 
     private data class MessageReadPayload(val dialogId: String? = null, val upToMessageId: String? = null)
 
+    /** Shared by `presence.subscribe`, `presence.unsubscribe`, and `typing.start`. */
+    private data class DialogRefPayload(val dialogId: String? = null)
+
     private data class CallInvitePayload(
         val callId: String? = null,
         val calleeId: String? = null,
@@ -81,6 +84,11 @@ class FrameCodec {
             "ping" -> InboundFrame.Ping(envelope.id, envelope.ts)
             "message.send" -> messageSend(envelope)
             "message.read" -> messageRead(envelope)
+            "presence.subscribe" ->
+                dialogRef(envelope, "presence.subscribe", InboundFrame::PresenceSubscribe)
+            "presence.unsubscribe" ->
+                dialogRef(envelope, "presence.unsubscribe", InboundFrame::PresenceUnsubscribe)
+            "typing.start" -> dialogRef(envelope, "typing.start", InboundFrame::TypingStart)
             "call.invite" -> callInvite(envelope)
             "call.accept" -> callAccept(envelope)
             "call.reject" -> callReject(envelope)
@@ -180,6 +188,16 @@ class FrameCodec {
         )
     }
 
+    private fun <T : InboundFrame> dialogRef(
+        envelope: Envelope,
+        type: String,
+        create: (String, Long?, String) -> T
+    ): T {
+        val id = requireEnvelopeId(envelope, type)
+        val payload = payload(envelope, id, type, DialogRefPayload::class.java)
+        return create(id, envelope.ts, payload.dialogId.required("dialog_id", id))
+    }
+
     private fun requireEnvelopeId(envelope: Envelope, type: String): String =
         envelope.id?.takeIf { it.isNotBlank() }
             ?: throw FrameDecodeException(ErrorCodes.BAD_FRAME, "$type requires an envelope 'id'")
@@ -199,6 +217,8 @@ class FrameCodec {
             is OutboundFrame.Ack -> "ack"
             is OutboundFrame.MessageNew -> "message.new"
             is OutboundFrame.MessageRead -> "message.read"
+            is OutboundFrame.PresenceUpdate -> "presence.update"
+            is OutboundFrame.TypingStart -> "typing.start"
             is OutboundFrame.Notification -> "notification.new"
             is OutboundFrame.CallSignal -> "call.signal"
             is OutboundFrame.Error -> "error"

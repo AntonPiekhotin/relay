@@ -8,15 +8,27 @@ import com.relay.common.dto.RejectCallRequest
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MarkReadCommand
 import com.relay.common.event.SendMessageCommand
+import com.relay.common.event.TypingEvent
 import com.relay.common.model.UserPrincipal
 import com.relay.websocket.input.handler.InboundFrameRouter
 import com.relay.websocket.output.event.MessageEventProducer
+import com.relay.websocket.output.event.PresenceEventProducer
 import com.relay.websocket.output.http.CallClient
 import com.relay.websocket.output.http.CallSignalResult
+import com.relay.websocket.output.http.DialogMembershipResolver
+import com.relay.websocket.output.socket.FrameDispatcher
+import com.relay.websocket.presence.LastSeenStore
+import com.relay.websocket.presence.PresenceService
+import com.relay.websocket.presence.PresenceSubscriptions
+import com.relay.websocket.presence.StubDialogMembershipClient
 import com.relay.websocket.protocol.ErrorCodes
 import com.relay.websocket.protocol.FrameCodec
 import com.relay.websocket.protocol.OutboundFrame
+import com.relay.websocket.protocol.PresenceStatus
+import com.relay.websocket.session.InMemorySessionRegistry
 import com.relay.websocket.session.RelaySession
+import com.relay.websocket.util.MessageClientProperties
+import com.relay.websocket.util.PresenceProperties
 import java.util.concurrent.CompletableFuture
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -44,12 +56,28 @@ class InboundFrameRouterTest {
 
     private val callClient = RecordingCallClient()
 
+    private val registry = InMemorySessionRegistry()
+
+    private val membershipClient = StubDialogMembershipClient().withDialog("d-1", "alice", "bob")
+
+    // Presence is assembled from its real collaborators: what belongs to this test is the routing,
+    // and a mock would let a frame reach the wrong one of them without failing.
+    private val presenceService = PresenceService(
+        subscriptions = PresenceSubscriptions(),
+        lastSeen = LastSeenStore(PresenceProperties()),
+        registry = registry,
+        membership = DialogMembershipResolver(membershipClient, MessageClientProperties()),
+        dispatcher = FrameDispatcher(registry),
+        producer = PresenceEventProducer(kafkaTemplate, jsonMapper)
+    )
+
     // A real producer over a mocked template: the test pins the whole gateway-side contract —
     // topic, partition key, and serialized command — not just that "something was published".
     private val router = InboundFrameRouter(
         FrameCodec(),
         MessageEventProducer(kafkaTemplate, jsonMapper),
-        callClient
+        callClient,
+        presenceService
     )
 
     private fun session(userId: String = "alice") =
@@ -185,6 +213,74 @@ class InboundFrameRouterTest {
             ErrorCodes.UNSUPPORTED_VERSION,
             assertIs<OutboundFrame.Error>(session.nextFrame()).code
         )
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), anyString())
+    }
+
+    // ---- presence and typing ----
+
+    @Test
+    fun `a presence subscription is answered with a snapshot per peer`() {
+        val session = session(userId = "alice")
+
+        router.route(session, """{"v":1,"type":"presence.subscribe","id":"p-1","payload":{"dialog_id":"d-1"}}""")
+
+        val update = assertIs<OutboundFrame.PresenceUpdate>(session.nextFrame())
+        assertEquals("bob", update.userId, "the subscriber is not a subject of its own subscription")
+        assertEquals(PresenceStatus.OFFLINE, update.status, "bob holds no session on this node")
+    }
+
+    @Test
+    fun `a subscription to a dialog the caller is not in fails with the frame id`() {
+        val session = session(userId = "mallory")
+
+        router.route(session, """{"v":1,"type":"presence.subscribe","id":"p-2","payload":{"dialog_id":"d-1"}}""")
+
+        val error = assertIs<OutboundFrame.Error>(session.nextFrame())
+        assertEquals(ErrorCodes.DIALOG_NOT_FOUND, error.code)
+        assertEquals("p-2", error.refId, "the client fails this subscription, not its whole presence state")
+    }
+
+    @Test
+    fun `unsubscribe and typing answer nothing, even for a dialog that is not the caller's`() {
+        queueSucceeds()
+        val session = session(userId = "mallory")
+
+        router.route(session, """{"v":1,"type":"presence.unsubscribe","id":"p-3","payload":{"dialog_id":"d-1"}}""")
+        router.route(session, """{"v":1,"type":"typing.start","id":"t-1","payload":{"dialog_id":"d-1"}}""")
+
+        // Completing puts the terminal marker at the head, so it arriving first proves nothing
+        // was queued ahead of it.
+        session.complete()
+        assertEquals(RelaySession.Outbound.Completed, session.awaitOutbound())
+    }
+
+    @Test
+    fun `typing is published with the typist taken from the session, not the frame`() {
+        queueSucceeds()
+        val session = session(userId = "alice")
+
+        // The payload even tries to claim somebody else is typing; it must be ignored.
+        router.route(
+            session,
+            """{"v":1,"type":"typing.start","id":"t-1","payload":{"dialog_id":"d-1","user_id":"mallory"}}"""
+        )
+
+        val value = ArgumentCaptor.forClass(String::class.java)
+        // Keyed by dialog, so one conversation's indicators stay in one partition.
+        verify(kafkaTemplate).send(eq(KafkaTopics.TYPING_START), eq("d-1"), value.capture())
+        val event = jsonMapper.readValue(value.value, TypingEvent::class.java)
+        assertEquals("alice", event.userId, "a client must not be able to type as someone else")
+        assertEquals(listOf("bob"), event.recipientIds, "resolved server-side, and never the typist")
+    }
+
+    @Test
+    fun `a presence subscription is served locally and publishes nothing`() {
+        val session = session()
+
+        router.route(session, """{"v":1,"type":"presence.subscribe","id":"p-1","payload":{"dialog_id":"d-1"}}""")
+
+        // The subscription and its snapshot both concern one connection on this node; only the
+        // transitions that follow are worth another node hearing about.
         verify(kafkaTemplate, never()).send(anyString(), anyString(), anyString())
     }
 

@@ -45,6 +45,39 @@ sealed interface InboundFrame {
     ) : InboundFrame
 
     /**
+     * Presence is **subscribe-on-demand**: a client asks for the peers of one conversation when it
+     * opens it, and drops them when it closes. Broadcasting every user's presence to all their
+     * contacts is what turns a carrier blip into a storm — 50k users reconnecting with 200 contacts
+     * each is 10 million frames, and it only happens during an incident.
+     *
+     * Addressed by dialog rather than by user for the same reason a send is: the client names a
+     * conversation it is in, and the server decides which people that is. Naming users directly
+     * would let a client watch anybody.
+     */
+    data class PresenceSubscribe(
+        override val id: String,
+        override val ts: Long? = null,
+        val dialogId: String
+    ) : InboundFrame
+
+    data class PresenceUnsubscribe(
+        override val id: String,
+        override val ts: Long? = null,
+        val dialogId: String
+    ) : InboundFrame
+
+    /**
+     * Typing carries no user — like every other inbound frame, that comes from the session. There is
+     * no `typing.stop` counterpart: the indicator expires client-side, so a stop frame lost on a
+     * dropped socket cannot leave somebody typing forever.
+     */
+    data class TypingStart(
+        override val id: String,
+        override val ts: Long? = null,
+        val dialogId: String
+    ) : InboundFrame
+
+    /**
      * Call signaling, one subtype per verb — unlike the single opaque `call.signal` frame going the
      * other way. The asymmetry is deliberate: outbound is a relay, so one type is enough, while
      * inbound is a command a state machine has to validate, and `accept` without an SDP should fail

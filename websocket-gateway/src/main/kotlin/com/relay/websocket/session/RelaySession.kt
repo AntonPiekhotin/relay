@@ -43,6 +43,13 @@ class RelaySession(
     val userId: String get() = principal.userId
 
     /**
+     * True once this session is shutting down, whether cleanly or as a slow consumer. Nothing will
+     * be delivered to it again, which is what lets a subscriber list prune itself instead of relying
+     * on a close callback that may have raced.
+     */
+    val isEnding: Boolean get() = ending.get()
+
+    /**
      * Returns false when the buffer is full or the session is already ending, i.e. the client is
      * not keeping up and its socket should be closed.
      *

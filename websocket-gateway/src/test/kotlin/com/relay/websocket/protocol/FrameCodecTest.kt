@@ -147,6 +147,84 @@ class FrameCodecTest {
         assertEquals(ErrorCodes.BAD_FRAME, decodeFailure("not json at all").code)
     }
 
+    // ---- presence and typing ----
+
+    @Test
+    fun `decodes the three dialog-scoped frames`() {
+        assertEquals(
+            "d-1",
+            assertIs<InboundFrame.PresenceSubscribe>(
+                codec.decode("""{"v":1,"type":"presence.subscribe","id":"p-1","payload":{"dialog_id":"d-1"}}""")
+            ).dialogId
+        )
+        assertEquals(
+            "d-1",
+            assertIs<InboundFrame.PresenceUnsubscribe>(
+                codec.decode("""{"v":1,"type":"presence.unsubscribe","id":"p-2","payload":{"dialog_id":"d-1"}}""")
+            ).dialogId
+        )
+        val typing = assertIs<InboundFrame.TypingStart>(
+            codec.decode("""{"v":1,"type":"typing.start","id":"t-1","payload":{"dialog_id":"d-1"}}""")
+        )
+        assertEquals("d-1", typing.dialogId)
+        assertEquals("t-1", typing.id)
+    }
+
+    @Test
+    fun `a typing frame carries no user - identity comes from the session`() {
+        val frame = codec.decode(
+            """{"v":1,"type":"typing.start","id":"t-1","payload":{"dialog_id":"d-1","user_id":"mallory"}}"""
+        )
+
+        // Nothing on the frame can hold it, which is the point: a claimed typist is dropped.
+        assertIs<InboundFrame.TypingStart>(frame)
+    }
+
+    @Test
+    fun `rejects presence and typing frames without a dialog or an envelope id`() {
+        val cases = listOf(
+            """{"v":1,"type":"presence.subscribe","id":"p-1","payload":{}}""",
+            """{"v":1,"type":"presence.subscribe","id":"p-1"}""",
+            """{"v":1,"type":"presence.unsubscribe","id":"p-2","payload":{"dialog_id":"  "}}""",
+            """{"v":1,"type":"typing.start","payload":{"dialog_id":"d-1"}}"""
+        )
+
+        cases.forEach { raw ->
+            assertEquals(ErrorCodes.BAD_FRAME, decodeFailure(raw).code, "should have been refused: $raw")
+        }
+    }
+
+    @Test
+    fun `encodes a presence update, omitting last-seen for somebody online`() {
+        val online = codec.encode(OutboundFrame.PresenceUpdate("bob", PresenceStatus.ONLINE, lastSeen = null))
+
+        assertTrue(online.contains("\"type\":\"presence.update\""), "was: $online")
+        assertTrue(online.contains("\"user_id\":\"bob\""), "was: $online")
+        assertTrue(online.contains("\"status\":\"online\""), "was: $online")
+        assertTrue(online.contains("\"last_seen\":null"), "was: $online")
+
+        val offline = codec.encode(
+            OutboundFrame.PresenceUpdate(
+                "bob",
+                PresenceStatus.OFFLINE,
+                lastSeen = Instant.parse("2026-08-13T10:00:00Z")
+            )
+        )
+
+        assertTrue(offline.contains("\"status\":\"offline\""), "was: $offline")
+        assertTrue(offline.contains("\"last_seen\":\"2026-08-13T10:00:00Z\""), "instants as ISO strings; was: $offline")
+    }
+
+    @Test
+    fun `encodes an outbound typing frame, which unlike the inbound one names the typist`() {
+        val json = codec.encode(OutboundFrame.TypingStart(dialogId = "d-1", userId = "alice"))
+
+        // Same type string as the inbound frame; the direction decides the shape.
+        assertTrue(json.contains("\"type\":\"typing.start\""), "was: $json")
+        assertTrue(json.contains("\"dialog_id\":\"d-1\""), "was: $json")
+        assertTrue(json.contains("\"user_id\":\"alice\""), "was: $json")
+    }
+
     // ---- call signaling ----
 
     @Test

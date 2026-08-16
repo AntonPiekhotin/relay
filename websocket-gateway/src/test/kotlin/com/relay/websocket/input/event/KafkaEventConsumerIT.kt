@@ -7,7 +7,11 @@ import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
 import com.relay.common.event.NotificationRequestedEvent
+import com.relay.common.event.PresenceEvent
+import com.relay.common.event.PresenceStatuses
+import com.relay.common.event.TypingEvent
 import com.relay.common.model.UserPrincipal
+import com.relay.websocket.presence.PresenceSubscriptions
 import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.RelaySession
 import com.relay.websocket.session.SessionRegistry
@@ -57,12 +61,15 @@ import tools.jackson.databind.json.JsonMapper
         KafkaTopics.MESSAGES_DELIVERY,
         KafkaTopics.NOTIFICATIONS,
         KafkaTopics.NOTIFICATIONS_DELIVERY,
-        KafkaTopics.CALL_SIGNAL
+        KafkaTopics.CALL_SIGNAL,
+        KafkaTopics.PRESENCE_UPDATE,
+        KafkaTopics.TYPING_START
     ]
 )
 class KafkaEventConsumerIT {
 
     @Autowired private lateinit var registry: SessionRegistry
+    @Autowired private lateinit var subscriptions: PresenceSubscriptions
     @Autowired private lateinit var kafkaTemplate: KafkaTemplate<String, String>
     @Autowired private lateinit var jsonMapper: JsonMapper
     @Autowired private lateinit var endpoints: KafkaListenerEndpointRegistry
@@ -132,6 +139,18 @@ class KafkaEventConsumerIT {
 
     private fun publish(topic: String, event: Any) {
         kafkaTemplate.send(topic, jsonMapper.writeValueAsString(event)).get()
+    }
+
+    /**
+     * Short on purpose: proving a frame did *not* arrive means waiting, and the listener has already
+     * been given time to deliver by whatever assertion came before this one.
+     */
+    private fun assertNoFrames(session: RelaySession) {
+        assertEquals(
+            null,
+            session.awaitOutbound(Duration.ofSeconds(2)),
+            "session ${session.sessionId} should have received nothing"
+        )
     }
 
     private fun accepted(
@@ -425,6 +444,58 @@ class KafkaEventConsumerIT {
         )
 
         assertNoRequestedNotifications()
+    }
+
+    // ---- presence and typing ----
+
+    @Test
+    fun `a presence transition reaches the sessions subscribed to that user`() {
+        val alice = sessionFor("alice-watcher")
+        val carol = sessionFor("carol-unrelated")
+        // Subscribed directly rather than through a presence.subscribe frame: the frame path needs a
+        // membership lookup over HTTP, and what is under test here is the listener and the fan-out.
+        subscriptions.subscribe(alice, "d-presence", setOf("bob-watched"))
+
+        publish(
+            KafkaTopics.PRESENCE_UPDATE,
+            PresenceEvent("bob-watched", PresenceStatuses.OFFLINE, Instant.parse("2026-08-13T10:00:00Z"))
+        )
+
+        val update = assertIs<OutboundFrame.PresenceUpdate>(alice.nextFrame())
+        assertEquals("bob-watched", update.userId)
+        assertEquals("offline", update.status)
+        assertEquals(Instant.parse("2026-08-13T10:00:00Z"), update.lastSeen)
+        // Nobody else hears about it: presence goes to subscribers, not to everyone connected.
+        assertNoFrames(carol)
+    }
+
+    @Test
+    fun `a transition for a user nobody here watches is dropped, not delivered`() {
+        val alice = sessionFor("alice-nonwatcher")
+
+        publish(KafkaTopics.PRESENCE_UPDATE, PresenceEvent("bob-unwatched", PresenceStatuses.ONLINE))
+
+        // Every node consumes every transition; a node holding no subscriber simply serves nothing.
+        assertNoFrames(alice)
+    }
+
+    @Test
+    fun `a typing indicator reaches the recipients the publishing node resolved`() {
+        val bob = sessionFor("bob-typed-at")
+
+        publish(
+            KafkaTopics.TYPING_START,
+            TypingEvent(
+                dialogId = "d-typing",
+                userId = "alice-typist",
+                // Resolved by the publisher and already excluding the typist.
+                recipientIds = listOf("bob-typed-at")
+            )
+        )
+
+        val typing = assertIs<OutboundFrame.TypingStart>(bob.nextFrame())
+        assertEquals("d-typing", typing.dialogId)
+        assertEquals("alice-typist", typing.userId)
     }
 
     @Test

@@ -7,8 +7,11 @@ import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
 import com.relay.common.event.NotificationRequestedEvent
+import com.relay.common.event.PresenceEvent
+import com.relay.common.event.TypingEvent
 import com.relay.websocket.output.event.NotificationEventProducer
 import com.relay.websocket.output.socket.FrameDispatcher
+import com.relay.websocket.presence.PresenceService
 import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.SessionRegistry
 import com.relay.websocket.util.EventCodec
@@ -30,7 +33,8 @@ class KafkaEventConsumer(
     private val dispatcher: FrameDispatcher,
     private val codec: EventCodec,
     private val registry: SessionRegistry,
-    private val notificationEventProducer: NotificationEventProducer
+    private val notificationEventProducer: NotificationEventProducer,
+    private val presenceService: PresenceService
 ) {
 
     /**
@@ -126,6 +130,40 @@ class KafkaEventConsumer(
                 OutboundFrame.Error(event.code, event.reason, event.clientMessageId)
             )
         }
+    }
+
+    /**
+     * Presence transitions, published by whichever node observed the socket open or close.
+     *
+     * **This is the only pair of topics the gateway produces to and consumes from**, and the round
+     * trip is the point: the node that saw Bob's phone connect is not necessarily the node holding
+     * Alice, who is watching him. Every node sees every transition and serves the subscriptions it
+     * holds, exactly like [onCallSignal].
+     *
+     * A user with no subscribers on this node is the common case and costs nothing — the event is
+     * decoded, finds an empty subscriber set, and is dropped.
+     */
+    @KafkaListener(
+        topics = [KafkaTopics.PRESENCE_UPDATE],
+        concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
+    )
+    fun onPresenceUpdate(raw: String) {
+        val event = codec.decode(KafkaTopics.PRESENCE_UPDATE, raw, PresenceEvent::class.java) ?: return
+        presenceService.deliver(event)
+    }
+
+    /**
+     * Typing indicators. The recipient list was resolved by the publishing node and travels on the
+     * event, so nothing here asks message-service anything — a consuming node holding one socket of a
+     * conversation must not have to look up who else is in it.
+     */
+    @KafkaListener(
+        topics = [KafkaTopics.TYPING_START],
+        concurrency = "#{T(com.relay.common.event.KafkaTopics).PARTITIONS}"
+    )
+    fun onTypingStart(raw: String) {
+        val event = codec.decode(KafkaTopics.TYPING_START, raw, TypingEvent::class.java) ?: return
+        presenceService.deliver(event)
     }
 
     /**

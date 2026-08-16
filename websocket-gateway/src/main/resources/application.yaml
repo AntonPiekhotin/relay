@@ -33,8 +33,14 @@ relay:
     path: /ws
     outbound-buffer-size: 256
     client-id: relay-client
+  message-client:
+    base-url: lb://message
+    membership-ttl: 5m
+    max-cached-dialogs: 10000
+  presence:
+    max-last-seen-entries: 100000
 
-# Registers so the gateway can resolve lb://message later. Clients connect to port 8083
+# Registers so the gateway can resolve lb://call and lb://message. Clients connect to port 8083
 # directly; api-gateway has no route here and its discovery locator is off.
 eureka:
   instance:

@@ -23,6 +23,16 @@ class WebSocketKafkaTopicsConfig {
     @Bean
     fun messagesReadTopic(): NewTopic = topic(KafkaTopics.MESSAGES_READ)
 
+    /**
+     * The gateway both produces and consumes these two. Declaring them here is still the producing
+     * service declaring its own topics — it just happens to be its own consumer as well.
+     */
+    @Bean
+    fun presenceUpdateTopic(): NewTopic = topic(KafkaTopics.PRESENCE_UPDATE)
+
+    @Bean
+    fun typingStartTopic(): NewTopic = topic(KafkaTopics.TYPING_START)
+
     @Bean
     fun notificationsTopic(): NewTopic = topic(KafkaTopics.NOTIFICATIONS)
 

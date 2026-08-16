@@ -50,6 +50,19 @@ class FrameDispatcher(
         return push(session, frame)
     }
 
+    /**
+     * Delivers to sessions the caller already holds, rather than resolving them from a user id.
+     *
+     * Presence works this way round: the recipients are whoever subscribed to a user, which is a set
+     * of connections and not a set of people. Routing still goes through here so overflow is handled
+     * in exactly one place.
+     */
+    fun deliverToSessions(sessions: Collection<RelaySession>, frame: OutboundFrame): Int {
+        var delivered = 0
+        sessions.forEach { session -> if (push(session, frame)) delivered++ }
+        return delivered
+    }
+
     /** Same as [deliverToUsers], but skips one session (the one that gets an ack instead). */
     fun deliverToUsersExcept(
         recipientIds: Collection<String>,

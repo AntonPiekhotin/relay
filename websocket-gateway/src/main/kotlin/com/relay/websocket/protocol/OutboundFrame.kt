@@ -22,6 +22,29 @@ object ErrorCodes {
      * peer connection rather than retrying a signal whose ordering has already been lost.
      */
     const val CALL_SIGNAL_FAILED = "CALL_SIGNAL_FAILED"
+
+    /**
+     * The dialog does not exist, or the caller is not in it — deliberately the same answer, so a
+     * presence subscription cannot be used to discover which dialog ids are real.
+     *
+     * The next three are spelled exactly as message-service spells them (`docs/PROTOCOL.md` §8).
+     * The gateway raises them itself on the presence and typing paths, where it is the one holding
+     * the answer to "is this your dialog", and a client that already handles the message-service
+     * versions needs no new code.
+     */
+    const val DIALOG_NOT_FOUND = "DIALOG_NOT_FOUND"
+
+    /** Rejected on validation — a malformed dialog id, for instance. Not retryable. */
+    const val INVALID_REQUEST = "INVALID_REQUEST"
+
+    /** Server-side failure with no better code. Retryable with backoff. */
+    const val INTERNAL = "INTERNAL"
+}
+
+/** The `status` vocabulary of a [OutboundFrame.PresenceUpdate]. Strings on the wire. */
+object PresenceStatus {
+    const val ONLINE = "online"
+    const val OFFLINE = "offline"
 }
 
 /**
@@ -58,6 +81,28 @@ sealed interface OutboundFrame {
         val userId: String,
         val upToMessageId: String,
         val readAt: Instant
+    ) : OutboundFrame
+
+    /**
+     * One person's connection state, sent only to sessions that subscribed to a dialog they are in.
+     *
+     * [lastSeen] is null while they are online — the status already says they are here — and null
+     * when this node has never watched them go offline. It is held in memory and never persisted
+     * (Principle 3), so a gateway restart forgets it.
+     */
+    data class PresenceUpdate(
+        val userId: String,
+        val status: String,
+        val lastSeen: Instant?
+    ) : OutboundFrame
+
+    /**
+     * Same type string as the inbound frame, like `message.read`: the direction decides the shape.
+     * Outbound adds [userId], because it has to say who is typing.
+     */
+    data class TypingStart(
+        val dialogId: String,
+        val userId: String
     ) : OutboundFrame
 
     data class Notification(
