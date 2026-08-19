@@ -41,8 +41,49 @@ logging:
   level:
     com.relay: DEBUG
     root: INFO
-    org.keycloak: DEBUG
-    org.jboss.resteasy: DEBUG
-    org.apache.http: DEBUG
-    org.apache.http.wire: TRACE
-    web: debug
+    web: INFO
+    # `org.apache.http: DEBUG` and `org.apache.http.wire: TRACE` were REMOVED here, and this is
+    # a security fix rather than a volume one. DEBUG on `org.apache.http` enables
+    # org.apache.http.headers, which prints, verbatim:
+    #     Authorization: Basic <base64 of relay-client:<the client-secret 20 lines above>>
+    #     Authorization: Bearer eyJ...
+    # and wire TRACE additionally prints whole token-endpoint responses, refresh tokens included.
+    # That was survivable while logs died in a gitignored file on one laptop. It is not
+    # survivable now that logs are shipped to an Elasticsearch with security disabled behind a
+    # passwordless Kibana, where `q=eyJ` would return every token this system ever issued.
+    # To debug the Keycloak client, opt in for one run with the `wiretap` profile
+    # (SPRING_PROFILES_ACTIVE=wiretap) — and never while the `logging` compose profile is up.
+    org.apache.http: WARN
+    org.keycloak: INFO
+    org.jboss.resteasy: INFO
+  # The console keeps Boot's human pattern on purpose: scripts/start-all.sh greps stdout for
+  # ': Started …Kt in N seconds' (readiness) and '(Tomcat|Netty) started on port N' (port
+  # discovery). This service runs server.port: 0, so JSON on the console would make it
+  # unfindable. Structured output goes to the file appender only.
+  threshold:
+    console: DEBUG   # local tail keeps the detail
+    file: INFO       # only INFO+ reaches Elasticsearch
+  pattern:
+    correlation: "[%X{requestId:-}] "   # Boot already registers the %correlationId rule
+  file:
+    # scripts/start-all.sh exports RELAY_LOG_DIR as an absolute path, so it is authoritative there.
+    # The bare default is relative to the JVM's cwd and assumes the repo root, which is what IDE
+    # run configurations use. Do not make it `../logs`: start-all.sh runs each JVM from its own
+    # service directory, but an IDE run would then write a level *above* the repo, outside the
+    # directory filebeat bind-mounts — logs land on disk and never reach Kibana.
+    name: ${RELAY_LOG_DIR:logs}/json/auth.json
+  logback:
+    rollingpolicy:
+      # total-size-cap defaults to 0B == unlimited, which is how one log file reached 445 MB.
+      # This bounds any future storm regardless of its cause.
+      max-file-size: 20MB
+      max-history: 3
+      total-size-cap: 200MB
+      clean-history-on-start: true
+  structured:
+    format:
+      file: ecs      # console deliberately left unset — see the threshold comment above
+    json:
+      stacktrace:
+        max-length: 8192
+        include-common-frames: false

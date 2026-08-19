@@ -19,3 +19,40 @@ eureka:
     wait-time-in-ms-when-sync-empty: 0
     enable-self-preservation: false
     eviction-interval-timer-in-ms: 5000
+
+logging:
+  level:
+    com.relay: DEBUG
+    root: INFO
+  # The console keeps Boot's human pattern on purpose: scripts/start-all.sh greps stdout for
+  # ': Started …Kt in N seconds' to decide eureka is up before starting anything else.
+  # Structured output goes to the file appender only.
+  threshold:
+    console: DEBUG   # local tail keeps the detail
+    file: INFO       # only INFO+ reaches Elasticsearch
+  file:
+    # scripts/start-all.sh exports RELAY_LOG_DIR as an absolute path, so it is authoritative there.
+    # The bare default is relative to the JVM's cwd and assumes the repo root, which is what IDE
+    # run configurations use. Do not make it `../logs`: start-all.sh runs each JVM from its own
+    # service directory, but an IDE run would then write a level *above* the repo, outside the
+    # directory filebeat bind-mounts — logs land on disk and never reach Kibana.
+    name: ${RELAY_LOG_DIR:logs}/json/eureka.json
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 3
+      total-size-cap: 200MB
+      clean-history-on-start: true
+  structured:
+    format:
+      file: ecs
+    ecs:
+      service:
+        # Spelled out because this is the one service with no spring.application.name — the ECS
+        # formatter falls back to that property, so without this every eureka record would reach
+        # Kibana with no service.name and be unfilterable.
+        name: eureka
+    json:
+      stacktrace:
+        max-length: 8192
+        include-common-frames: false

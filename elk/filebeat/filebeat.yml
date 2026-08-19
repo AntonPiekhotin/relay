@@ -1,0 +1,60 @@
+# Filebeat reads the ECS JSON the services write to logs/json/ and forwards it to Logstash.
+#
+# The services run on the HOST as plain `java -jar` children of scripts/start-all.sh, not in
+# containers, so there is no docker log driver to read. The hand-off is a file, which is also
+# what makes the whole pipeline fail-safe: if Logstash or Elasticsearch is down, the JVMs neither
+# know nor care, and filebeat resumes from its registry when they come back.
+#
+# There is no multiline configuration anywhere in this pipeline, on purpose. Spring Boot's ECS
+# formatter puts the entire stack trace inside a single `error.stack_trace` string, so every
+# line of every file is exactly one complete document. Nothing to reassemble.
+
+filebeat.inputs:
+  - type: filestream          # the older `log` input is deprecated
+    id: relay-json
+    enabled: true
+    paths:
+      # Two globs because the working directory decides where a service writes, and the launchers
+      # disagree: start-all.sh exports an absolute RELAY_LOG_DIR (always <repo>/logs), while an IDE
+      # run configuration yields the repo root for some services and the module directory for
+      # others. Covering both means a mis-set cwd cannot silently strand logs off the mount.
+      - /relay-repo/logs/json/*.json
+      - /relay-repo/*/logs/json/*.json
+    prospector.scanner:
+      # Docker Desktop bind mounts do not deliver inotify events into the container. filestream
+      # polls rather than relying on inotify, which is the reason this works on macOS at all.
+      # 2s keeps Kibana feeling live without burning CPU on nine files.
+      check_interval: 2s
+      # logback rotates to <service>.json.<date>.<i>.gz. The *.json glob already excludes those;
+      # this is belt and braces so a re-roll can never re-ship history.
+      exclude_files: ['\.gz$']
+    parsers:
+      - ndjson:
+          target: ""            # merge the parsed object into the event root
+          # Without this, every document gets filebeat's *read* time as @timestamp instead of
+          # the record's own, and Kibana's histogram lies whenever filebeat is catching up.
+          overwrite_keys: true
+          # Boot emits literally dotted keys ("log.level":"DEBUG"). Expanding them into nested
+          # objects is what lets Elasticsearch's ECS mappings apply to them.
+          expand_keys: true
+          # A malformed line becomes error.message rather than being silently dropped.
+          add_error_key: true
+    close.on_state_change.inactive: 5m
+    # A service that stays down for days should not hold a file handle forever.
+    clean_inactive: 72h
+    ignore_older: 48h
+
+processors:
+  # None of this is worth indexing: there is one filebeat, one host, and `ecs.version` is set by
+  # both Boot and filebeat, so leaving both in place is a pointless mapping conflict.
+  - drop_fields:
+      fields: ["agent", "input", "host", "log.offset", "ecs.version"]
+      ignore_missing: true
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+# Logs only — no metrics, no APM, no modules.
+monitoring.enabled: false
+filebeat.config.modules.enabled: false
+logging.level: info

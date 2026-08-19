@@ -1,6 +1,8 @@
 package com.relay.websocket.input.handler
 
 import com.relay.common.model.UserPrincipal
+import com.relay.common.observability.RequestId
+import com.relay.common.observability.RequestIdContext
 import com.relay.websocket.presence.PresenceService
 import com.relay.websocket.protocol.ACCESS_TOKEN_PROTOCOL
 import com.relay.websocket.protocol.FrameCodec
@@ -82,6 +84,12 @@ class RelayWebSocketHandler(
     }
 
     private fun pumpOutbound(socket: WebSocketSession, relaySession: RelaySession) {
+        // Seeded once, not per frame: this is a fresh virtual thread bound to one connection for its
+        // whole life, and MDC is a non-inheritable ThreadLocal so it starts empty no matter what the
+        // thread that called startWriter had. Without this, every "fell behind its outbound buffer"
+        // and "Write failed" record below would name a socket and no user.
+        RequestIdContext.put(RequestId.MDC_USER_ID, relaySession.userId)
+        RequestIdContext.put(RequestId.MDC_SESSION_ID, relaySession.sessionId)
         try {
             while (true) {
                 when (val next = relaySession.awaitOutbound()) {
@@ -108,6 +116,8 @@ class RelayWebSocketHandler(
             // close callback, which unregisters the session.
             logger.debug("Write failed on session {}, closing", socket.id, ex)
             closeQuietly(socket, CloseStatus.SERVER_ERROR)
+        } finally {
+            RequestIdContext.clear()
         }
     }
 
@@ -117,7 +127,16 @@ class RelayWebSocketHandler(
      */
     override fun handleTextMessage(socket: WebSocketSession, message: TextMessage) {
         val relaySession = sessions[socket.id] ?: return
-        router.route(relaySession, message.payload)
+        // A socket frame is not an HTTP request, so no servlet filter ever runs for it and the MDC
+        // would otherwise be empty for everything the gateway logs about this client. The request id
+        // itself is set inside `route`, once the frame has been decoded far enough to read its id.
+        RequestIdContext.with(
+            requestId = null,
+            userId = relaySession.userId,
+            sessionId = relaySession.sessionId,
+        ) {
+            router.route(relaySession, message.payload)
+        }
     }
 
     override fun handleTransportError(socket: WebSocketSession, exception: Throwable) {

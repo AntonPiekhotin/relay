@@ -7,6 +7,8 @@ import com.relay.common.dto.InviteCallRequest
 import com.relay.common.dto.RejectCallRequest
 import com.relay.common.event.MarkReadCommand
 import com.relay.common.event.SendMessageCommand
+import com.relay.common.observability.RequestId
+import com.relay.common.observability.RequestIdContext
 import com.relay.websocket.output.event.MessageEventProducer
 import com.relay.websocket.output.http.CallClient
 import com.relay.websocket.output.http.CallSignalResult
@@ -50,6 +52,15 @@ class InboundFrameRouter(
             session.send(OutboundFrame.Error(ex.code, ex.message, ex.refId))
             return
         }
+        // The envelope's own `id` is already documented as the client's correlation and idempotency
+        // handle, so it is reused as the correlation id rather than inventing a parallel one — which
+        // also means nothing is added to the frame, and the wire contract is untouched. Only Ping
+        // may omit it. Prefixed so a client-supplied value can never be mistaken for a server-minted
+        // id in Kibana.
+        RequestIdContext.put(
+            RequestId.MDC_REQUEST_ID,
+            frame.id?.let { "ws-$it" } ?: RequestId.newId(),
+        )
         when (frame) {
             is InboundFrame.Ping -> session.send(OutboundFrame.Pong(frame.id))
             is InboundFrame.MessageSend -> send(session, frame)
@@ -130,11 +141,16 @@ class InboundFrameRouter(
             senderSessionId = session.sessionId,
             text = frame.text
         )
+        // Captured here, restored in the callback: this completes on Kafka's producer I/O thread with
+        // an empty MDC, so anything the error path logs would otherwise be uncorrelated.
+        val mdc = RequestIdContext.capture()
         messageEventProducer.publish(command).whenComplete { _, ex ->
-            if (ex != null) {
-                session.send(
-                    OutboundFrame.Error(ErrorCodes.SEND_FAILED, "Message could not be queued", frame.id)
-                )
+            mdc.restoring {
+                if (ex != null) {
+                    session.send(
+                        OutboundFrame.Error(ErrorCodes.SEND_FAILED, "Message could not be queued", frame.id)
+                    )
+                }
             }
         }
     }

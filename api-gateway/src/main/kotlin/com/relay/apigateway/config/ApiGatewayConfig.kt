@@ -1,13 +1,16 @@
 package com.relay.apigateway.config
 
+import com.relay.common.observability.RequestId
 import org.springframework.cloud.gateway.server.mvc.filter.LoadBalancerFilterFunctions.lb
 import org.springframework.cloud.gateway.server.mvc.handler.GatewayRouterFunctions.route
 import org.springframework.cloud.gateway.server.mvc.handler.HandlerFunctions.http
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.web.client.RestTemplate
+import org.springframework.web.servlet.function.HandlerFilterFunction
 import org.springframework.web.servlet.function.RequestPredicates
 import org.springframework.web.servlet.function.RouterFunction
+import org.springframework.web.servlet.function.ServerRequest
 import org.springframework.web.servlet.function.ServerResponse
 
 @Configuration
@@ -45,5 +48,28 @@ class ApiGatewayConfig {
         route(serviceId)
             .route(RequestPredicates.path(pathPattern), http())
             .filter(lb(serviceId))
+            .filter(propagateRequestId())
             .build()
+
+    /**
+     * Copies this request's correlation id onto the proxied request, so the downstream service's
+     * own `RequestIdFilter` adopts it rather than minting a second one and breaking the chain.
+     *
+     * `RequestIdFilter` from `common` has already established the id in the MDC by the time a route
+     * runs; this only has to forward it. Applied inside [forward], so all five routes get it from
+     * one place.
+     *
+     * A `HandlerFilterFunction` rather than `BeforeFilterFunctions.addRequestHeader`, because that
+     * helper only expands URI variables and cannot take a value computed per request. Gateway MVC
+     * proxies from the [ServerRequest], so the header has to be added there rather than on the
+     * `HttpServletRequest`.
+     */
+    private fun propagateRequestId(): HandlerFilterFunction<ServerResponse, ServerResponse> =
+        HandlerFilterFunction { request, next ->
+            next.handle(
+                ServerRequest.from(request)
+                    .header(RequestId.HEADER, RequestId.currentOrNew())
+                    .build(),
+            )
+        }
 }

@@ -3,6 +3,7 @@ package com.relay.websocket.output.event
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MarkReadCommand
 import com.relay.common.event.SendMessageCommand
+import com.relay.common.observability.RequestIdContext
 import java.util.concurrent.CompletableFuture
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.core.KafkaTemplate
@@ -28,32 +29,42 @@ class MessageEventProducer(
      * on a failed hand-off, which is the caller's cue to tell the client to retry over REST.
      * Fire-and-forget beyond that: the ack itself arrives later via `messages.delivery`.
      */
-    fun publish(command: SendMessageCommand): CompletableFuture<Void> =
-        kafkaTemplate
+    fun publish(command: SendMessageCommand): CompletableFuture<Void> {
+        // Captured here, restored in the callback: these run on Kafka's producer I/O thread, where
+        // the MDC is empty. Without it, the record saying a client's send never reached the broker —
+        // the one worth finding — would be the only uncorrelated record in the chain.
+        val mdc = RequestIdContext.capture()
+        return kafkaTemplate
             .send(KafkaTopics.MESSAGES_INCOMING, command.dialogId, jsonMapper.writeValueAsString(command))
             .handle { _, ex ->
-                if (ex != null) {
-                    logger.error(
-                        "Could not queue send {} from session {}",
-                        command.clientMessageId, command.senderSessionId, ex
-                    )
-                    throw ex
+                mdc.restoring {
+                    if (ex != null) {
+                        logger.error(
+                            "Could not queue send {} from session {}",
+                            command.clientMessageId, command.senderSessionId, ex
+                        )
+                        throw ex
+                    }
+                    logger.debug("Queued send {} for dialog {}", command.clientMessageId, command.dialogId)
+                    null
                 }
-                logger.debug("Queued send {} for dialog {}", command.clientMessageId, command.dialogId)
-                null
             }
+    }
 
     fun publishRead(command: MarkReadCommand) {
+        val mdc = RequestIdContext.capture()
         kafkaTemplate
             .send(KafkaTopics.MESSAGES_READ, command.dialogId, jsonMapper.writeValueAsString(command))
             .whenComplete { _, ex ->
-                if (ex != null) {
-                    logger.error(
-                        "Could not queue read of dialog {} up to {} from session {}",
-                        command.dialogId, command.upToMessageId, command.readerSessionId, ex
-                    )
-                } else {
-                    logger.debug("Queued read of dialog {} up to {}", command.dialogId, command.upToMessageId)
+                mdc.restoring {
+                    if (ex != null) {
+                        logger.error(
+                            "Could not queue read of dialog {} up to {} from session {}",
+                            command.dialogId, command.upToMessageId, command.readerSessionId, ex
+                        )
+                    } else {
+                        logger.debug("Queued read of dialog {} up to {}", command.dialogId, command.upToMessageId)
+                    }
                 }
             }
     }

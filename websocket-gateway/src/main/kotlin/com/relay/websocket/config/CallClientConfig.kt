@@ -1,5 +1,6 @@
 package com.relay.websocket.config
 
+import com.relay.common.observability.RequestIdClientHttpRequestInterceptor
 import com.relay.websocket.util.CallClientProperties
 import java.net.http.HttpClient
 import org.springframework.cloud.client.loadbalancer.LoadBalanced
@@ -33,15 +34,27 @@ class CallClientConfig {
     @Primary
     fun plainRestClientBuilder(): RestClient.Builder = RestClient.builder()
 
+    /**
+     * The correlation interceptor goes on this builder rather than on each client, which covers both
+     * `HttpCallClient` and `HttpDialogMembershipClient` — they inject the same builder. Attached
+     * explicitly because Boot's `RestClientCustomizer` only reaches the builder *it* auto-configures,
+     * not a hand-built one. Deliberately not on the [Primary] plain builder above: that carries
+     * Eureka's own registry traffic, which nobody wants correlated.
+     */
     @Bean
     @LoadBalanced
-    fun loadBalancedRestClientBuilder(properties: CallClientProperties): RestClient.Builder {
+    fun loadBalancedRestClientBuilder(
+        properties: CallClientProperties,
+        requestId: RequestIdClientHttpRequestInterceptor,
+    ): RestClient.Builder {
         val httpClient = HttpClient.newBuilder()
             .connectTimeout(properties.connectTimeout)
             .build()
         val requestFactory = JdkClientHttpRequestFactory(httpClient).apply {
             setReadTimeout(properties.readTimeout)
         }
-        return RestClient.builder().requestFactory(requestFactory)
+        return RestClient.builder()
+            .requestFactory(requestFactory)
+            .requestInterceptor(requestId)
     }
 }

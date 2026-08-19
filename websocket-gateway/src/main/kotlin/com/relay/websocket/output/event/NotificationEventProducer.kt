@@ -2,6 +2,7 @@ package com.relay.websocket.output.event
 
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.NotificationRequestedEvent
+import com.relay.common.observability.RequestIdContext
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.stereotype.Component
@@ -24,16 +25,21 @@ class NotificationEventProducer(
     private val logger = LoggerFactory.getLogger(javaClass)
 
     fun publish(request: NotificationRequestedEvent) {
+        // Captured here, restored in the callback: whenComplete runs on Kafka's producer I/O thread,
+        // where the MDC is empty.
+        val mdc = RequestIdContext.capture()
         kafkaTemplate
             .send(KafkaTopics.NOTIFICATIONS, request.recipientId, jsonMapper.writeValueAsString(request))
             .whenComplete { _, ex ->
-                if (ex != null) {
-                    logger.error(
-                        "Could not request a {} notification for offline user {}",
-                        request.kind, request.recipientId, ex
-                    )
-                } else {
-                    logger.debug("Requested {} notification for offline user {}", request.kind, request.recipientId)
+                mdc.restoring {
+                    if (ex != null) {
+                        logger.error(
+                            "Could not request a {} notification for offline user {}",
+                            request.kind, request.recipientId, ex
+                        )
+                    } else {
+                        logger.debug("Requested {} notification for offline user {}", request.kind, request.recipientId)
+                    }
                 }
             }
     }

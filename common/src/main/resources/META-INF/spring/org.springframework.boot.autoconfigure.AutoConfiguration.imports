@@ -1,0 +1,3 @@
+com.relay.common.observability.RequestIdWebAutoConfiguration
+com.relay.common.observability.RequestIdHttpClientAutoConfiguration
+com.relay.common.observability.RequestIdKafkaAutoConfiguration

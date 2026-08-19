@@ -1,0 +1,19 @@
+# Opt-in HTTP wire logging for debugging the Keycloak client. Activate for a single run:
+#
+#     SPRING_PROFILES_ACTIVE=wiretap ./gradlew bootRun
+#
+# This LOGS CREDENTIALS VERBATIM and is why the levels were removed from application.yaml:
+#
+#   org.apache.http.headers  ->  Authorization: Basic <base64 relay-client:<client-secret>>
+#                                Authorization: Bearer eyJ...
+#   org.apache.http.wire     ->  whole token-endpoint responses, refresh tokens included
+#
+# Never enable this while the `logging` compose profile is up. Elasticsearch runs with
+# xpack.security.enabled=false behind a passwordless Kibana, so anything indexed here is
+# permanently greppable by anyone who can reach :9200. The Logstash pipeline
+# (elk/logstash/pipeline/relay.conf) drops both loggers as a backstop, but the pipeline is the
+# wall — do not lean on it.
+logging:
+  level:
+    org.apache.http: DEBUG
+    org.apache.http.wire: TRACE

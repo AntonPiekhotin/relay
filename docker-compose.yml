@@ -244,10 +244,149 @@ services:
     networks:
       - relay-network
 
+  # --- Logging stack (ELK) — dev only, opt-in ----------------------------------------------
+  #
+  #   docker compose --profile logging up -d          (or: scripts/start-all.sh --infra --logging)
+  #
+  # Profile-gated on purpose. These four cost ~2.2 GB of RAM, and a plain `docker compose up -d`
+  # — which is what scripts/start-all.sh --infra runs — must stay as cheap as it is today. Docker
+  # Desktop needs >= 6 GB allocated before enabling this, or Elasticsearch is OOM-killed mid-index.
+  #
+  # The relay services run on the HOST as plain `java -jar` processes, not in containers, so there
+  # is no docker log driver to read. The hand-off is a file: each JVM writes ECS JSON to
+  # logs/json/<service>.json (see logging.file.name in each application.yaml) and filebeat reads
+  # that directory through a read-only bind mount. The consequence worth knowing is that ELK being
+  # down never affects a service — the files are the buffer, and filebeat resumes from its registry.
+  #
+  # All four images MUST carry the identical tag. A filebeat one minor ahead of logstash is the
+  # most common way this setup breaks, and it breaks as an opaque handshake error.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.17.4}
+    container_name: elasticsearch
+    profiles: ["logging"]
+    environment:
+      node.name: relay-es
+      discovery.type: single-node
+      # Dev only: no TLS, no password, :9200 open to anything on the host. Which is precisely why
+      # the credential redaction in elk/logstash/pipeline/relay.conf is not optional.
+      xpack.security.enabled: "false"
+      xpack.license.self_generated.type: basic
+      ingest.geoip.downloader.enabled: "false"
+      bootstrap.memory_lock: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      cluster.routing.allocation.disk.watermark.low: 90%
+      cluster.routing.allocation.disk.watermark.high: 95%
+      cluster.routing.allocation.disk.watermark.flood_stage: 97%
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - relay-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=2s'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:${ELASTIC_VERSION:-8.17.4}
+    container_name: logstash
+    profiles: ["logging"]
+    environment:
+      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
+      xpack.monitoring.enabled: "false"
+      # Settings go here rather than in a mounted logstash.yml on purpose. This image's entrypoint
+      # runs env2yaml, which REWRITES config/logstash.yml at boot: bind-mounting that file read-only
+      # crash-loops the container ("read-only file system"), and mounting it writable would let the
+      # container edit the file in this repo. Env vars are the supported route — uppercase the
+      # setting name and turn dots into underscores.
+      HTTP_HOST: "0.0.0.0"
+      # Edit elk/logstash/pipeline/relay.conf and it takes effect in ~5s with no restart. This is
+      # most of why logstash is in the pipeline at all: each service's application.yaml is baked
+      # into its bootJar, so muting a chatty logger there costs a rebuild and a restart.
+      CONFIG_RELOAD_AUTOMATIC: "true"
+      CONFIG_RELOAD_INTERVAL: "5s"
+      PIPELINE_WORKERS: "2"
+      PIPELINE_BATCH_SIZE: "250"
+      LOG_LEVEL: "info"
+    volumes:
+      - ./elk/logstash/pipeline:/usr/share/logstash/pipeline:ro
+    ports:
+      # Node stats API, for the healthcheck and for `curl localhost:9600/_node/stats`. The beats
+      # input on 5044 needs no host publication — filebeat reaches it on relay-network.
+      - "9600:9600"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - relay-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9600/_node/stats || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-8.17.4}
+    container_name: kibana
+    profiles: ["logging"]
+    environment:
+      SERVER_NAME: kibana
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      # Must be >= 32 chars, or Kibana generates a fresh one each boot and loses every saved
+      # object (data views, saved searches) along with it.
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: "relay-dev-kibana-encryption-key-000000"
+      NODE_OPTIONS: "--max-old-space-size=768"
+      TELEMETRY_OPTIN: "false"
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - relay-network
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-8.17.4}
+    container_name: filebeat
+    profiles: ["logging"]
+    # Both of these are required, and their absence is the classic
+    # "Exiting: error loading config file" on Docker Desktop: filebeat refuses a config file it
+    # does not own, and a macOS bind mount cannot hand it uid-0 ownership.
+    user: root
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    volumes:
+      - ./elk/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      # The repo root, read-only, rather than just ./logs/json — because where a service writes
+      # depends on its working directory, and the two launchers disagree. start-all.sh runs each JVM
+      # from its own service directory (and exports an absolute RELAY_LOG_DIR), while IntelliJ picks
+      # the working directory per module with no WORKING_DIRECTORY set, giving the repo root for some
+      # services and the module directory for others. Mounting the root lets filebeat.yml glob both
+      # <repo>/logs/json and <repo>/<service>/logs/json, so no run configuration has to be fixed by
+      # hand and a mis-set cwd cannot silently strand logs off the mount. Filebeat only ever reads,
+      # and the globs are explicit, so nothing else in the repo is touched.
+      - ./:/relay-repo:ro
+      # Must stay a named volume: the read registry lives here, and a bind mount would lose it on
+      # `compose down` and re-ship every file from the top.
+      - filebeat_data:/usr/share/filebeat/data
+    depends_on:
+      logstash:
+        condition: service_started
+    networks:
+      - relay-network
+
 volumes:
   kafka_data:
   keycloak_postgres_data:
   session-registry-data:
+  elasticsearch_data:
+  filebeat_data:
 
 networks:
   relay-network:

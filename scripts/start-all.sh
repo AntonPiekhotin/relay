@@ -11,12 +11,13 @@
 # rather than started a second time.
 #
 # Usage:
-#   scripts/start-all.sh [--skip-build] [--sequential] [--infra] [--force]
+#   scripts/start-all.sh [--skip-build] [--sequential] [--infra] [--logging] [--force]
 #                        [--only "user message"]
 #
 #   --skip-build   reuse the jars already in <service>/build/libs
 #   --sequential   start the post-eureka services one at a time, waiting for each
 #   --infra        `docker compose up -d` first and wait for kafka + the databases
+#   --logging      with --infra, also bring up the ELK stack (compose profile `logging`)
 #   --force        start even a service that looks like it is already running
 #   --only LIST    space-separated service names (eureka is always started first)
 #
@@ -44,6 +45,7 @@ FIXED_PORTS="eureka:8761 api-gateway:8080 websocket-gateway:8083"
 SKIP_BUILD=0
 SEQUENTIAL=0
 WITH_INFRA=0
+WITH_LOGGING=0
 FORCE=0
 
 # --- pretty output ---------------------------------------------------------
@@ -60,13 +62,14 @@ warn()  { printf '  %swarn%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 fail()  { printf '  %sfail%s %s\n' "$C_RED" "$C_RESET" "$*"; }
 die()   { fail "$*"; exit 1; }
 
-usage() { sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1 ;;
     --sequential) SEQUENTIAL=1 ;;
     --infra)      WITH_INFRA=1 ;;
+    --logging)    WITH_LOGGING=1 ;;
     --force)      FORCE=1 ;;
     --only)       shift; [ $# -gt 0 ] || die "--only needs a service list"; SERVICES="$1" ;;
     -h|--help)    usage ;;
@@ -78,7 +81,15 @@ done
 # eureka is started by its own step; never double-start it from the list.
 SERVICES="$(printf '%s\n' $SERVICES | grep -v "^${EUREKA}$" | tr '\n' ' ')"
 
-mkdir -p "$LOG_DIR" "$PID_DIR"
+# logs/json holds the ECS JSON each service writes for filebeat to ship (see each service's
+# logging.file.name). It must exist before `docker compose up` or Docker creates it as a
+# root-owned directory and the JVMs then cannot write into it.
+mkdir -p "$LOG_DIR" "$LOG_DIR/json" "$PID_DIR"
+
+# Services resolve logging.file.name against ${RELAY_LOG_DIR:../logs}. spawn() runs each JVM
+# from its own service directory, so the relative default already lands here — this makes it
+# absolute so the path does not depend on the cwd.
+export RELAY_LOG_DIR="$LOG_DIR"
 
 # --- helpers --------------------------------------------------------------
 port_open() { # host port
@@ -173,7 +184,11 @@ service_port() { # service
 # --- optional: docker infrastructure -------------------------------------
 start_infra() {
   step "Bringing up infrastructure (docker compose)"
-  ( cd "$ROOT" && docker compose up -d ) || die "docker compose up failed"
+  # The ELK containers sit behind the `logging` compose profile, so a plain `up -d` leaves them
+  # down — they cost ~2.2 GB and are not needed to run the services. --logging opts in.
+  local profiles=""
+  [ "$WITH_LOGGING" -eq 1 ] && profiles="--profile logging"
+  ( cd "$ROOT" && docker compose $profiles up -d ) || die "docker compose up failed"
 
   # host:port pairs the services connect to on boot
   local waits="kafka:9092 keycloak:8081 user-db:5434 notification-db:5435 call-db:5436 message-db:5437"
@@ -188,6 +203,16 @@ start_infra() {
     done
     port_open localhost "$port" && ok "$name listening on :$port"
   done
+
+  # Deliberately not in the wait list above: log shipping must never gate service startup, and
+  # Elasticsearch takes far longer to go green than anything else here. Just report.
+  if [ "$WITH_LOGGING" -eq 1 ]; then
+    if port_open localhost 9200; then
+      ok "elasticsearch listening on :9200 (kibana on :5601)"
+    else
+      info "  ...   elasticsearch still starting — Kibana will be on :5601 shortly"
+    fi
+  fi
 }
 
 # --- build ----------------------------------------------------------------

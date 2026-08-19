@@ -1,0 +1,16 @@
+{
+  "index_patterns": ["logs-relay.app-*"],
+  "data_stream": {},
+  "priority": 200,
+  "composed_of": ["logs@mappings", "logs@settings", "ecs@mappings"],
+  "template": {
+    "settings": {
+      "index.lifecycle.name": "relay-dev-logs",
+      "number_of_shards": 1,
+      "number_of_replicas": 0
+    }
+  },
+  "_meta": {
+    "description": "Relay dev logs. priority 200 beats Elasticsearch's built-in logs-*-* template (100) so index.lifecycle.name points at a policy that actually deletes; the built-in logs policy rolls over but never deletes, which on a laptop means unbounded growth. number_of_replicas must be 0: on a single node any replica leaves the cluster permanently yellow, which the compose healthcheck's wait_for_status=yellow would then mask."
+  }
+}

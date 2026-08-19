@@ -3,6 +3,7 @@ package com.relay.call.output.event
 import com.relay.call.model.dto.event.CallNotificationRequested
 import com.relay.call.model.dto.event.CallSignalRaised
 import com.relay.common.event.KafkaTopics
+import com.relay.common.observability.RequestIdContext
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.stereotype.Component
@@ -42,12 +43,18 @@ class KafkaEventProducer(
     }
 
     private fun send(topic: String, key: String, payload: Any) {
+        // Captured here, restored in the callback: whenComplete runs on Kafka's producer I/O thread,
+        // where the MDC is empty, so the record reporting a failed publish would otherwise be the
+        // only uncorrelated one in the chain.
+        val mdc = RequestIdContext.capture()
         kafkaTemplate.send(topic, key, jsonMapper.writeValueAsString(payload))
             .whenComplete { _, ex ->
-                if (ex != null) {
-                    logger.error("Could not publish to {} for key {}", topic, key, ex)
-                } else {
-                    logger.debug("Published {} to {} for key {}", payload::class.simpleName, topic, key)
+                mdc.restoring {
+                    if (ex != null) {
+                        logger.error("Could not publish to {} for key {}", topic, key, ex)
+                    } else {
+                        logger.debug("Published {} to {} for key {}", payload::class.simpleName, topic, key)
+                    }
                 }
             }
     }

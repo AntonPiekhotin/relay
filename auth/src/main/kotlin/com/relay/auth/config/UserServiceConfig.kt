@@ -1,6 +1,7 @@
 package com.relay.auth.config
 
 import com.relay.auth.util.UserServiceProperties
+import com.relay.common.observability.RequestIdClientHttpRequestInterceptor
 import java.net.http.HttpClient
 import org.springframework.cloud.client.loadbalancer.LoadBalanced
 import org.springframework.context.annotation.Bean
@@ -37,9 +38,17 @@ class UserServiceConfig {
     @Bean(USER_SERVICE_REST_CLIENT)
     fun userServiceRestClient(
         @LoadBalanced builder: RestClient.Builder,
-        props: UserServiceProperties
+        props: UserServiceProperties,
+        requestId: RequestIdClientHttpRequestInterceptor
     ): RestClient = builder
         .baseUrl(props.baseUrl)
+        // Forwards this request's correlation id to user-service, so a registration reads as one
+        // chain across auth and user in Kibana instead of two unrelated ones. Attached here rather
+        // than through a RestClientCustomizer because Boot only applies those to the builder it
+        // auto-configures, and the builders above are hand-built for the deadlock reason documented
+        // on plainRestClientBuilder. Deliberately not on the @Primary plain builder: that one
+        // carries Eureka's own registry traffic, which nobody wants correlated.
+        .requestInterceptor(requestId)
         .requestFactory(
             JdkClientHttpRequestFactory(
                 HttpClient.newBuilder()

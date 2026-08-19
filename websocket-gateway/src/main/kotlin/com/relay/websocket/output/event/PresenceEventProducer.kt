@@ -3,6 +3,7 @@ package com.relay.websocket.output.event
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.PresenceEvent
 import com.relay.common.event.TypingEvent
+import com.relay.common.observability.RequestIdContext
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.stereotype.Component
@@ -43,13 +44,18 @@ class PresenceEventProducer(
     }
 
     private fun publish(topic: String, key: String, event: Any, describe: () -> String) {
+        // Captured here, restored in the callback: whenComplete runs on Kafka's producer I/O thread,
+        // where the MDC is empty.
+        val mdc = RequestIdContext.capture()
         kafkaTemplate
             .send(topic, key, jsonMapper.writeValueAsString(event))
             .whenComplete { _, ex ->
-                if (ex != null) {
-                    logger.warn("Could not publish {}: {}", describe(), ex.message)
-                } else {
-                    logger.debug("Published {}", describe())
+                mdc.restoring {
+                    if (ex != null) {
+                        logger.warn("Could not publish {}: {}", describe(), ex.message)
+                    } else {
+                        logger.debug("Published {}", describe())
+                    }
                 }
             }
     }

@@ -66,3 +66,44 @@ logging:
   level:
     com.relay: DEBUG
     root: INFO
+    # Kafka's clients log a great deal at INFO that is either boilerplate — a full ProducerConfig
+    # dump per producer, version banners, metrics-collector chatter — or retry churn: coordinator
+    # discovery, metadata refresh, reconnect storms. Measured at 3340 records / 2 MB in a single
+    # websocket-gateway startup, and a 445 MB file when a broker stayed unreachable overnight.
+    # One line rather than a growing list of named loggers, because every Kafka INFO logger found
+    # here so far has been noise. WARN still carries the real failures: disconnects, authentication
+    # errors, oversized records, and anything that fails to resolve.
+    org.apache.kafka: WARN
+    # The exception: this one storms at WARN too while a broker is unreachable.
+    org.apache.kafka.clients.NetworkClient: ERROR
+  # The console keeps Boot's human pattern on purpose: scripts/start-all.sh greps stdout for
+  # ': Started …Kt in N seconds' (readiness) and '(Tomcat|Netty) started on port N' (port
+  # discovery). This service runs server.port: 0, so JSON on the console would make it
+  # unfindable. Structured output goes to the file appender only.
+  threshold:
+    console: DEBUG   # local tail keeps the detail
+    file: INFO       # only INFO+ reaches Elasticsearch
+  pattern:
+    correlation: "[%X{requestId:-}] "   # Boot already registers the %correlationId rule
+  file:
+    # scripts/start-all.sh exports RELAY_LOG_DIR as an absolute path, so it is authoritative there.
+    # The bare default is relative to the JVM's cwd and assumes the repo root, which is what IDE
+    # run configurations use. Do not make it `../logs`: start-all.sh runs each JVM from its own
+    # service directory, but an IDE run would then write a level *above* the repo, outside the
+    # directory filebeat bind-mounts — logs land on disk and never reach Kibana.
+    name: ${RELAY_LOG_DIR:logs}/json/call.json
+  logback:
+    rollingpolicy:
+      # total-size-cap defaults to 0B == unlimited, which is how one log file reached 445 MB.
+      # This bounds any future storm regardless of its cause.
+      max-file-size: 20MB
+      max-history: 3
+      total-size-cap: 200MB
+      clean-history-on-start: true
+  structured:
+    format:
+      file: ecs      # console deliberately left unset — see the threshold comment above
+    json:
+      stacktrace:
+        max-length: 8192
+        include-common-frames: false

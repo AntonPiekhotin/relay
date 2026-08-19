@@ -1,5 +1,7 @@
 package com.relay.call.service
 
+import com.relay.common.observability.RequestId
+import com.relay.common.observability.RequestIdContext
 import org.slf4j.LoggerFactory
 import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.scheduling.annotation.Scheduled
@@ -24,8 +26,13 @@ class CallSweeper(
 
     private val logger = LoggerFactory.getLogger(javaClass)
 
+    /**
+     * A scheduled tick has no ambient request, so it gets a fresh correlation id per sweep. That is
+     * what makes one sweep's records — the expiries, the ICE settlements, and any failure among them
+     * — groupable in Kibana rather than interleaved with every other tick at the same log level.
+     */
     @Scheduled(fixedDelayString = "\${relay.call.sweep-interval}")
-    fun sweep() {
+    fun sweep() = RequestIdContext.with(RequestId.newId()) {
         expireRungOutCalls()
         settleBufferedCandidates()
     }
