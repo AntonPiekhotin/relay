@@ -49,9 +49,7 @@ relay:
       # Off by default so the service runs without Firebase credentials (LoggingPushSender).
       enabled: true
       credentials-location: ${FCM_CREDENTIALS_LOCATION:file:../secrets/fcm-service-account-credentials.json}
-      # With enabled=true, dry-run=true asks FCM to validate credentials/token/payload without
-      # delivering anything — the smoke test before a client app exists.
-      dry-run: true
+      dry-run: false
 
 eureka:
   instance:
