@@ -446,6 +446,61 @@ class KafkaEventConsumerIT {
         assertNoRequestedNotifications()
     }
 
+    @Test
+    fun `a group invite pushes each offline invitee and labels the push as a group call`() {
+        val carolOnline = sessionFor("carol-online-group")
+
+        publish(
+            KafkaTopics.CALL_SIGNAL,
+            CallSignalEvent(
+                callId = "group-call-1",
+                fromUserId = "alice-group-caller",
+                signal = mapOf(
+                    CallSignalKeys.VERB to CallSignalVerbs.GROUP_INVITE,
+                    CallSignalKeys.KIND to "group",
+                    CallSignalKeys.MEDIA to "video",
+                    CallSignalKeys.RING_EXPIRES_AT to "2026-07-26T10:00:40Z"
+                ),
+                recipientIds = listOf("bob-offline-group", "carol-online-group")
+            )
+        )
+
+        // The invitee with a socket is rung by frame…
+        assertIs<OutboundFrame.CallSignal>(carolOnline.nextFrame())
+
+        // …and only the offline one becomes a push, carrying the group label through.
+        val (key, request) = requestedNotifications().single()
+        assertEquals("bob-offline-group", key)
+        assertEquals(NotificationRequestedEvent.KIND_INCOMING_CALL, request.kind)
+        assertEquals("group", request.payload[NotificationRequestedEvent.KEY_CALL_KIND])
+        assertEquals("video", request.payload[NotificationRequestedEvent.KEY_MEDIA])
+    }
+
+    @Test
+    fun `group roster deltas are relayed and never pushed`() {
+        val alice = sessionFor("alice-roster")
+
+        publish(
+            KafkaTopics.CALL_SIGNAL,
+            CallSignalEvent(
+                callId = "group-call-2",
+                fromUserId = "bob-roster",
+                signal = mapOf(
+                    CallSignalKeys.VERB to CallSignalVerbs.PARTICIPANT_JOINED,
+                    CallSignalKeys.USER_ID to "bob-roster"
+                ),
+                // One recipient online, one offline: the offline one gets nothing, by design.
+                recipientIds = listOf("alice-roster", "dave-offline-roster")
+            )
+        )
+
+        assertEquals(
+            CallSignalVerbs.PARTICIPANT_JOINED,
+            assertIs<OutboundFrame.CallSignal>(alice.nextFrame()).signal[CallSignalKeys.VERB]
+        )
+        assertNoRequestedNotifications()
+    }
+
     // ---- presence and typing ----
 
     @Test

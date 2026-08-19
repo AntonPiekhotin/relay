@@ -19,13 +19,16 @@ data class CallResponse(
 
 /**
  * One row of the call log. [direction] and [peerId] are relative to whoever asked — the same call
- * is outgoing for one participant and incoming for the other.
+ * is outgoing for one participant and incoming for the other. For a group call [peerId] is the
+ * initiator (null when the viewer is the initiator) and [participantCount] says how big it was.
  */
 data class CallHistoryEntry(
     val id: String,
     val dialogId: String?,
+    val kind: String,
     val direction: String,
     val peerId: String?,
+    val participantCount: Int,
     val media: String,
     val status: String,
     val startedAt: Instant,

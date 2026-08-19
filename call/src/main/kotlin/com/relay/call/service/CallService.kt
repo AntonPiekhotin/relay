@@ -3,9 +3,11 @@ package com.relay.call.service
 import com.relay.call.config.CallProperties
 import com.relay.call.model.ActiveCall
 import com.relay.call.model.Call
+import com.relay.call.model.CallKind
 import com.relay.call.model.CallMedia
 import com.relay.call.model.CallParticipant
 import com.relay.call.model.CallStatus
+import com.relay.call.model.ParticipantState
 import com.relay.call.model.dto.CallHistoryResponse
 import com.relay.call.model.dto.CallResponse
 import com.relay.call.model.dto.event.CallNotificationRequested
@@ -41,8 +43,9 @@ import org.springframework.transaction.annotation.Transactional
  * SDP and ICE payloads are relayed as opaque blobs), and trust a client's account of what happened
  * (the ring timeout, the busy check, and every state guard are decided from the database).
  *
- * Direct calls only. The schema supports more participants, but [invite] takes exactly one callee
- * and every guard below assumes two — group calls need a `join` verb and an SFU, not a wider loop.
+ * Direct calls only. [invite] takes exactly one callee and every guard below assumes two — group
+ * calls are a different machine (join/decline/leave, an SFU, REST entry points) and live in
+ * [GroupCallService]; a group call id reaching any verb here is answered 400.
  */
 @Service
 class CallService(
@@ -81,7 +84,12 @@ class CallService(
         )
         val participants = participantRepository.saveAllAndFlush(
             listOf(
-                CallParticipant(callId = callId, userId = request.callerId, joinedAt = call.startedAt),
+                CallParticipant(
+                    callId = callId,
+                    userId = request.callerId,
+                    joinedAt = call.startedAt,
+                    state = ParticipantState.JOINED
+                ),
                 CallParticipant(callId = callId, userId = request.calleeId)
             )
         )
@@ -112,7 +120,10 @@ class CallService(
         val answeredAt = Instant.now()
         call.status = CallStatus.ANSWERED
         call.answeredAt = answeredAt
-        participants.firstOrNull { it.userId == request.userId }?.joinedAt = answeredAt
+        participants.firstOrNull { it.userId == request.userId }?.let {
+            it.joinedAt = answeredAt
+            it.state = ParticipantState.JOINED
+        }
         callRepository.saveAndFlush(call)
 
         raise(call, request.userId, CallSignals.accept(request.sdp), listOf(call.initiator))
@@ -137,6 +148,7 @@ class CallService(
         requireRinging(call)
 
         val reason = request.reason ?: CallSignals.Reasons.DECLINED
+        participants.firstOrNull { it.userId == request.userId }?.state = ParticipantState.DECLINED
         terminate(call, participants, CallStatus.REJECTED, reason)
 
         raise(call, request.userId, CallSignals.reject(reason), listOf(call.initiator))
@@ -187,6 +199,7 @@ class CallService(
             logger.debug("Buffered a candidate from {} for unknown call {}", request.userId, callId)
             return
         }
+        requireDirect(call)
         if (call.status.isTerminal) {
             logger.debug("Dropping a candidate for {} call {}", call.status.wireValue, callId)
             return
@@ -230,11 +243,16 @@ class CallService(
         )
     }
 
-    /** Calls still ringing past the timeout. Read by the sweeper, which then expires them one by one. */
+    /**
+     * Direct calls still ringing past the timeout. Read by the sweeper, which then expires them
+     * one by one. Group calls ring out through [GroupCallService] — different terminal choreography.
+     */
     @Transactional(readOnly = true)
     fun findRungOutCallIds(now: Instant = Instant.now()): List<UUID> =
         callRepository
-            .findAllByStatusAndStartedAtBefore(CallStatus.RINGING, now.minus(properties.ringTimeout))
+            .findAllByKindAndStatusAndStartedAtBefore(
+                CallKind.DIRECT, CallStatus.RINGING, now.minus(properties.ringTimeout)
+            )
             .map { it.id }
 
     /**
@@ -291,6 +309,7 @@ class CallService(
      * the first one. A settled call is described rather than re-rung.
      */
     private fun resendOrDescribe(existing: Call, request: InviteCallRequest): CallResponse {
+        requireDirect(existing)
         if (existing.initiator != request.callerId) {
             throw RelayException(
                 HttpStatus.CONFLICT.value(),
@@ -372,7 +391,14 @@ class CallService(
         reason: String
     ) {
         call.terminate(status, reason)
-        participants.forEach { it.leftAt = call.endedAt }
+        participants.forEach {
+            it.leftAt = call.endedAt
+            when {
+                it.state == ParticipantState.JOINED -> it.state = ParticipantState.LEFT
+                it.state == ParticipantState.INVITED && status == CallStatus.MISSED ->
+                    it.state = ParticipantState.MISSED
+            }
+        }
         callRepository.saveAndFlush(call)
         activeCallRepository.deleteAllByCallId(call.id)
     }
@@ -448,8 +474,18 @@ class CallService(
 
     private fun requireCall(rawCallId: String): Call {
         val callId = rawCallId.toUuid()
-        return callRepository.findById(callId).orElseThrow {
+        val call = callRepository.findById(callId).orElseThrow {
             RelayException(HttpStatus.NOT_FOUND.value(), "Call $rawCallId not found")
+        }
+        // Every caller of this is a direct-call verb; a group call answers them 400, not 422 —
+        // the client used the wrong surface, not the right one too late.
+        requireDirect(call)
+        return call
+    }
+
+    private fun requireDirect(call: Call) {
+        if (call.kind != CallKind.DIRECT) {
+            throw RelayException(HttpStatus.BAD_REQUEST.value(), "Call ${call.id} is not a direct call")
         }
     }
 

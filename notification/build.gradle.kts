@@ -36,6 +36,9 @@ dependencies {
     implementation("tools.jackson.module:jackson-module-kotlin")
     implementation("com.relay:common:1.0")
     implementation("com.google.firebase:firebase-admin:9.7.0")
+    // APNs client for iOS VoIP pushes (PushKit). FCM cannot ring a locked iPhone; only an
+    // `apns-push-type: voip` send against the voip_token can — see docs/ARCHITECTURE.md §7.
+    implementation("com.eatthepath:pushy:0.15.4")
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("org.springframework.boot:spring-boot-flyway")

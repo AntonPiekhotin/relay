@@ -1,5 +1,9 @@
+# Fixed rather than random, unlike the other business services: the LiveKit container posts
+# webhooks here (participant_left, room_finished), and a container cannot ask Eureka where a
+# random port landed. Same reasoning as websocket-gateway's fixed 8083. start-all.sh's port grep
+# reads the same 'Tomcat started on port N' line either way.
 server:
-  port: 0
+  port: 8084
 
 spring:
   threads:
@@ -46,6 +50,19 @@ relay:
     ice-buffer-ttl: 5s
     history-page-size: 50
     max-history-page-size: 100
+    reconcile-interval: 30s
+    reconcile-grace: 30s
+    livekit:
+      # `url` is what clients get; `api-url` is what this service calls. Same server, but the two
+      # diverge the moment anything is deployed off localhost, so they are two settings from day one.
+      url: ${LIVEKIT_URL:ws://localhost:7880}
+      api-url: ${LIVEKIT_API_URL:http://localhost:7880}
+      api-key: ${LIVEKIT_API_KEY:devkey}
+      # Must match the container's key map and be at least 32 characters, or LiveKit refuses to start.
+      api-secret: ${LIVEKIT_API_SECRET:relay-livekit-dev-secret-32-chars!!}
+      token-ttl: 5m
+    group:
+      max-participants: 16
     turn:
       urls:
         - stun:localhost:3478
@@ -78,8 +95,7 @@ logging:
     org.apache.kafka.clients.NetworkClient: ERROR
   # The console keeps Boot's human pattern on purpose: scripts/start-all.sh greps stdout for
   # ': Started …Kt in N seconds' (readiness) and '(Tomcat|Netty) started on port N' (port
-  # discovery). This service runs server.port: 0, so JSON on the console would make it
-  # unfindable. Structured output goes to the file appender only.
+  # discovery). Structured output goes to the file appender only.
   threshold:
     console: DEBUG   # local tail keeps the detail
     file: INFO       # only INFO+ reaches Elasticsearch

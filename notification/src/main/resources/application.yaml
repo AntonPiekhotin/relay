@@ -50,6 +50,17 @@ relay:
       enabled: true
       credentials-location: ${FCM_CREDENTIALS_LOCATION:file:../secrets/fcm-service-account-credentials.json}
       dry-run: false
+    apns:
+      # Off until an Apple .p8 signing key exists. Without it, iOS incoming-call pushes ride FCM's
+      # data-only path — which cannot ring a locked iPhone; only apns-push-type: voip can.
+      enabled: false
+      signing-key-location: ${APNS_SIGNING_KEY_LOCATION:file:../secrets/apns-signing-key.p8}
+      team-id: ${APNS_TEAM_ID:}
+      key-id: ${APNS_KEY_ID:}
+      bundle-id: ${APNS_BUNDLE_ID:com.relay.app}
+      # sandbox | production — which APNs host to talk to. Sandbox tokens are rejected by
+      # production and vice versa, so a "BadDeviceToken" here is often just the wrong environment.
+      environment: sandbox
 
 eureka:
   instance:

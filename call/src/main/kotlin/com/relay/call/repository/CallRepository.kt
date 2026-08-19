@@ -1,11 +1,14 @@
 package com.relay.call.repository
 
 import com.relay.call.model.Call
+import com.relay.call.model.CallKind
 import com.relay.call.model.CallStatus
+import jakarta.persistence.LockModeType
 import java.time.Instant
 import java.util.UUID
 import org.springframework.data.domain.Limit
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.stereotype.Repository
@@ -13,8 +16,47 @@ import org.springframework.stereotype.Repository
 @Repository
 interface CallRepository : JpaRepository<Call, UUID> {
 
-    /** The ring-timeout sweeper's query. Served by `ix_calls_status_started_at`. */
-    fun findAllByStatusAndStartedAtBefore(status: CallStatus, startedAt: Instant): List<Call>
+    /** The ring-timeout sweepers' query, split by kind — the two kinds expire differently. */
+    fun findAllByKindAndStatusAndStartedAtBefore(
+        kind: CallKind,
+        status: CallStatus,
+        startedAt: Instant
+    ): List<Call>
+
+    /**
+     * `SELECT ... FOR UPDATE`, serializing every group-call transition on the call's own row.
+     *
+     * The optimistic version cannot do this job: two participants leaving at once each delete their
+     * own `active_calls` row and then count what remains — and under READ COMMITTED each still sees
+     * the other's uncommitted delete, so *neither* believes it is the last one out, and the call is
+     * stranded ANSWERED with an empty room. A non-last leave never writes the `calls` row, so there
+     * is no version bump for the race to trip over. The row lock makes "count the remaining" read
+     * the truth. Direct calls stay on the optimistic version exactly as before.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select c from Call c where c.id = :id")
+    fun findWithLockById(@Param("id") id: UUID): Call?
+
+    /**
+     * Answered group calls that still have somebody ringing past the timeout. The per-invitee half
+     * of the ring sweep: the call goes on, but each unanswered invitee individually rings out.
+     */
+    @Query(
+        """
+        select distinct c.id from Call c
+        where c.kind = com.relay.call.model.CallKind.GROUP
+          and c.status = com.relay.call.model.CallStatus.ANSWERED
+          and c.startedAt < :startedBefore
+          and exists (
+              select p from CallParticipant p
+              where p.callId = c.id and p.state = com.relay.call.model.ParticipantState.INVITED
+          )
+        """
+    )
+    fun findAnsweredGroupCallIdsWithPendingInvites(@Param("startedBefore") startedBefore: Instant): List<UUID>
+
+    /** Live group calls, for reconciliation against the SFU's own view of the room. */
+    fun findAllByKindAndStatusIn(kind: CallKind, statuses: Collection<CallStatus>): List<Call>
 
     /**
      * One page of a user's call log, newest first.

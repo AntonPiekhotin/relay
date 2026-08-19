@@ -6,7 +6,9 @@ import com.relay.notification.model.DeviceToken
 import com.relay.notification.output.push.PushMessage
 import com.relay.notification.output.push.PushResult
 import com.relay.notification.output.push.PushSender
+import com.relay.notification.output.push.VoipPushSender
 import com.relay.notification.service.DeviceTokenService
+import java.time.Instant
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
@@ -28,6 +30,9 @@ private const val PREVIEW_LENGTH = 140
 class NotificationRequestConsumer(
     private val deviceTokenService: DeviceTokenService,
     private val pushSender: PushSender,
+    // Nullable on purpose: the bean exists only when relay.push.apns.enabled is true. Without it,
+    // iOS call pushes stay on FCM's data-only path — degraded (no locked-phone ring), not broken.
+    private val voipPushSender: VoipPushSender?,
     private val jsonMapper: JsonMapper
 ) {
 
@@ -59,6 +64,7 @@ class NotificationRequestConsumer(
 
     private fun sendToDevices(tokens: List<DeviceToken>, message: PushMessage) {
         tokens.forEach { token ->
+            if (sentOverVoip(token, message)) return@forEach
             when (pushSender.send(token, message)) {
                 PushResult.SENT -> Unit
                 // Self-healing token store: FCM declared this registration permanently invalid
@@ -69,6 +75,29 @@ class NotificationRequestConsumer(
                 // the recipient catches up on next open — no retry machinery here.
                 PushResult.TRANSIENT_FAILURE ->
                     logger.warn("Push to device {} of user {} failed transiently, dropped", token.deviceId, token.userId)
+            }
+        }
+    }
+
+    /**
+     * VoIP XOR FCM, per device: an iOS device with a voip token gets the incoming call over APNs
+     * VoIP (the only send that rings a locked iPhone), and only that — a second FCM push for the
+     * same call would double-ring a foregrounded app. FCM stays the fallback when the VoIP send
+     * fails for any reason, so a device never gets nothing where it could have gotten *something*.
+     * A dead voip token clears the column, not the row — the FCM token may be fine.
+     */
+    private fun sentOverVoip(token: DeviceToken, message: PushMessage): Boolean {
+        if (voipPushSender == null || !message.voipPreferred) return false
+        if (!token.platform.equals("ios", ignoreCase = true) || token.voipToken.isNullOrBlank()) return false
+        return when (voipPushSender.send(token, message)) {
+            PushResult.SENT -> true
+            PushResult.TOKEN_DEAD -> {
+                deviceTokenService.clearVoipToken(token.userId, token.deviceId)
+                false
+            }
+            PushResult.TRANSIENT_FAILURE -> {
+                logger.warn("VoIP push to device {} of user {} failed, falling back to FCM", token.deviceId, token.userId)
+                false
             }
         }
     }
@@ -106,12 +135,19 @@ class NotificationRequestConsumer(
                 "callId" to request.payload[NotificationRequestedEvent.KEY_CALL_ID].toString(),
                 "callerId" to request.payload[NotificationRequestedEvent.KEY_CALLER_ID].toString(),
                 "media" to request.mediaOrDefault(),
-                "ringExpiresAt" to request.payload[NotificationRequestedEvent.KEY_RING_EXPIRES_AT].toString()
+                "ringExpiresAt" to request.payload[NotificationRequestedEvent.KEY_RING_EXPIRES_AT].toString(),
+                "callKind" to request.callKindOrDefault()
             ),
-            dataOnly = true
+            dataOnly = true,
+            // A call is the one push allowed on APNs VoIP — and the only send that rings a locked
+            // iPhone. Where a device has no voip token, the FCM data-only path carries it as before.
+            voipPreferred = true,
+            expiresAt = (request.payload[NotificationRequestedEvent.KEY_RING_EXPIRES_AT] as? String)
+                ?.let { runCatching { Instant.parse(it) }.getOrNull() }
         )
 
-        /* After the fact, so an ordinary visible alert is exactly right. */
+        /* After the fact, so an ordinary visible alert is exactly right — never VoIP: a PushKit
+         * push that does not report a CallKit call gets the app killed by iOS. */
         NotificationRequestedEvent.KIND_MISSED_CALL -> PushMessage(
             title = "Missed call",
             body = "You missed a ${request.mediaOrDefault()} call",
@@ -119,7 +155,8 @@ class NotificationRequestConsumer(
                 "kind" to request.kind,
                 "callId" to request.payload[NotificationRequestedEvent.KEY_CALL_ID].toString(),
                 "callerId" to request.payload[NotificationRequestedEvent.KEY_CALLER_ID].toString(),
-                "media" to request.mediaOrDefault()
+                "media" to request.mediaOrDefault(),
+                "callKind" to request.callKindOrDefault()
             )
         )
 
@@ -128,4 +165,8 @@ class NotificationRequestConsumer(
 
     private fun NotificationRequestedEvent.mediaOrDefault(): String =
         payload[NotificationRequestedEvent.KEY_MEDIA] as? String ?: "voice"
+
+    private fun NotificationRequestedEvent.callKindOrDefault(): String =
+        payload[NotificationRequestedEvent.KEY_CALL_KIND] as? String
+            ?: NotificationRequestedEvent.CALL_KIND_DIRECT
 }

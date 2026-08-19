@@ -244,6 +244,61 @@ services:
     networks:
       - relay-network
 
+  # The group-call media plane (SFU). Same doctrine as coturn one block up: media never traverses
+  # a service — call-service only mints room tokens (signed JWTs, room = callId) and consumes this
+  # container's webhooks; clients connect here directly on 7880 with the token they were handed.
+  # 1:1 calls do not use this at all; they stay peer-to-peer through coturn.
+  #
+  # The whole config rides in the LIVEKIT_CONFIG env var rather than a mounted file, because
+  # compose substitutes ${...} inside it — a config file cannot take the secret from the
+  # environment without a template step. The api key/secret pair must match
+  # `relay.call.livekit.api-key/api-secret` in call/application.yaml, and LiveKit refuses secrets
+  # shorter than 32 characters.
+  #
+  # `node_ip` is coturn's `--external-ip` lesson again: LiveKit allocates media inside the bridge
+  # network, and without the override it advertises its 172.x address in ICE candidates — clients
+  # connect, signaling works, and media silently never flows. Point it at the public address in
+  # production.
+  #
+  # `udp_port` (a single multiplexed UDP port) instead of the default 50000-60000 range: every
+  # participant shares 7882, so there is one published UDP port instead of ten thousand mappings,
+  # and no collision with coturn's 49160-49200. 7881 is ICE over TCP, the fallback for UDP-hostile
+  # networks.
+  #
+  # `room_finished` fires ~60s (empty_timeout) after the last participant drops; call-service's
+  # webhook handler uses it as the end-of-call backstop. The webhook URL points at the host because
+  # the relay services run as host JVMs, not containers — host-gateway makes that name resolve on
+  # Linux too, and call-service listens on the fixed 8084 precisely so this URL can exist.
+  livekit:
+    image: livekit/livekit-server:v1.9
+    container_name: livekit
+    restart: unless-stopped
+    environment:
+      LIVEKIT_CONFIG: |
+        port: 7880
+        keys:
+          ${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-relay-livekit-dev-secret-32-chars!!}
+        rtc:
+          tcp_port: 7881
+          udp_port: 7882
+          use_external_ip: false
+          node_ip: ${LIVEKIT_NODE_IP:-127.0.0.1}
+        room:
+          auto_create: true
+          empty_timeout: 60
+        webhook:
+          api_key: ${LIVEKIT_API_KEY:-devkey}
+          urls:
+            - http://host.docker.internal:8084/internal/api/v1/livekit/webhooks
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "7880:7880"        # ws/http — client signaling, RoomService API, webhooks' source
+      - "7881:7881"        # ICE over TCP fallback
+      - "7882:7882/udp"    # all media, multiplexed
+    networks:
+      - relay-network
+
   # --- Logging stack (ELK) — dev only, opt-in ----------------------------------------------
   #
   #   docker compose --profile logging up -d          (or: scripts/start-all.sh --infra --logging)

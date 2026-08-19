@@ -42,6 +42,10 @@ class Call(
     @Column(name = "type", nullable = false, updatable = false, length = 8)
     val media: CallMedia,
 
+    /** Which state machine owns this row — see [CallKind]. */
+    @Column(name = "kind", nullable = false, updatable = false, length = 8)
+    val kind: CallKind = CallKind.DIRECT,
+
     /** Client-supplied and never validated — dialogs belong to message-service. */
     @Column(name = "dialog_id", updatable = false)
     val dialogId: UUID? = null,

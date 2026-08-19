@@ -35,6 +35,12 @@ data class NotificationRequestedEvent(
         const val KEY_MEDIA = "media"
         const val KEY_RING_EXPIRES_AT = "ringExpiresAt"
 
+        /** `direct` or `group`, so a client can draw the right call UI before fetching anything. */
+        const val KEY_CALL_KIND = "callKind"
+
+        const val CALL_KIND_DIRECT = "direct"
+        const val CALL_KIND_GROUP = "group"
+
         /** The push request for a chat message the recipient was not connected to receive. */
         fun messageNew(recipientId: String, event: MessageDeliveryEvent.Accepted) =
             NotificationRequestedEvent(
@@ -61,7 +67,8 @@ data class NotificationRequestedEvent(
             callerId: String,
             media: String,
             requestedAt: Instant,
-            ringExpiresAt: Instant
+            ringExpiresAt: Instant,
+            callKind: String = CALL_KIND_DIRECT
         ) = NotificationRequestedEvent(
             recipientId = recipientId,
             kind = KIND_INCOMING_CALL,
@@ -69,7 +76,8 @@ data class NotificationRequestedEvent(
                 KEY_CALL_ID to callId,
                 KEY_CALLER_ID to callerId,
                 KEY_MEDIA to media,
-                KEY_RING_EXPIRES_AT to ringExpiresAt.toString()
+                KEY_RING_EXPIRES_AT to ringExpiresAt.toString(),
+                KEY_CALL_KIND to callKind
             ),
             requestedAt = requestedAt
         )
@@ -80,14 +88,16 @@ data class NotificationRequestedEvent(
             callId: String,
             callerId: String,
             media: String,
-            requestedAt: Instant
+            requestedAt: Instant,
+            callKind: String = CALL_KIND_DIRECT
         ) = NotificationRequestedEvent(
             recipientId = recipientId,
             kind = KIND_MISSED_CALL,
             payload = mapOf(
                 KEY_CALL_ID to callId,
                 KEY_CALLER_ID to callerId,
-                KEY_MEDIA to media
+                KEY_MEDIA to media,
+                KEY_CALL_KIND to callKind
             ),
             requestedAt = requestedAt
         )

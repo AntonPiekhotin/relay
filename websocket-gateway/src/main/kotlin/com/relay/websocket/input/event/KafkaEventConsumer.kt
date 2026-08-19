@@ -219,15 +219,19 @@ class KafkaEventConsumer(
      * invite becomes a push request instead — the same decision, and the same in-memory-registry
      * caveat, as [requestNotificationsForOfflineRecipients].
      *
-     * Only invites. Every other verb concerns a call the client is already tracking, and a push for
-     * one would be noise.
+     * Only invites — direct or group. Every other verb concerns a call the client is already
+     * tracking, and a push for one would be noise. Both invite verbs carry `media` and
+     * `ring_expires_at` in the same keys, which is what lets one extraction serve both.
      */
     private fun requestPushForUnreachableCallees(event: CallSignalEvent) {
-        if (event.signal[CallSignalKeys.VERB] != CallSignalVerbs.INVITE) return
+        val verb = event.signal[CallSignalKeys.VERB]
+        if (verb != CallSignalVerbs.INVITE && verb != CallSignalVerbs.GROUP_INVITE) return
         val media = event.signal[CallSignalKeys.MEDIA] as? String ?: return
         val ringExpiresAt = (event.signal[CallSignalKeys.RING_EXPIRES_AT] as? String)
             ?.let { runCatching { Instant.parse(it) }.getOrNull() }
             ?: return
+        val callKind = event.signal[CallSignalKeys.KIND] as? String
+            ?: NotificationRequestedEvent.CALL_KIND_DIRECT
 
         event.recipientIds
             .distinct()
@@ -240,7 +244,8 @@ class KafkaEventConsumer(
                         callerId = event.fromUserId,
                         media = media,
                         requestedAt = Instant.now(),
-                        ringExpiresAt = ringExpiresAt
+                        ringExpiresAt = ringExpiresAt,
+                        callKind = callKind
                     )
                 )
             }

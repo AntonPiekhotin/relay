@@ -44,5 +44,9 @@ class CallParticipant(
     var joinedAt: Instant? = null,
 
     @Column(name = "left_at")
-    var leftAt: Instant? = null
+    var leftAt: Instant? = null,
+
+    /** This participant's own position — see [ParticipantState]. Group calls branch on it. */
+    @Column(name = "state", nullable = false, length = 16)
+    var state: ParticipantState = ParticipantState.INVITED
 )

@@ -35,11 +35,18 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-kafka")
     implementation("tools.jackson.module:jackson-module-kotlin")
     implementation("com.relay:common:1.0")
+    // LiveKit server SDK: room-token minting (offline JWT signing), the RoomService API client
+    // used by reconciliation, and the webhook signature verifier. No media code — the SFU is a
+    // container the clients talk to directly.
+    implementation("io.livekit:livekit-server:0.10.0")
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("org.springframework.boot:spring-boot-flyway")
     runtimeOnly("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    // Explicit because livekit-server only carries it as a runtime dep: tests decode the room
+    // tokens the service mints, and forge signed webhook requests the way LiveKit would.
+    testImplementation("com.auth0:java-jwt:4.5.0")
     testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
     testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testImplementation("org.springframework.kafka:spring-kafka-test")

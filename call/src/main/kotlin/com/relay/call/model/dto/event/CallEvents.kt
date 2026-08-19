@@ -16,3 +16,11 @@ import com.relay.common.event.NotificationRequestedEvent
 data class CallSignalRaised(val signal: CallSignalEvent)
 
 data class CallNotificationRequested(val request: NotificationRequestedEvent)
+
+/**
+ * A group call reached a terminal state; the SFU room should be closed so lingering clients are
+ * disconnected. An event rather than an inline call for the usual reason a network call is kept
+ * out of a transaction — and closing the room is best-effort either way, because LiveKit's own
+ * empty-room timeout cleans up whatever this misses.
+ */
+data class GroupCallTerminated(val callId: java.util.UUID)

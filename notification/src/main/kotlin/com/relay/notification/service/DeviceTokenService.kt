@@ -52,6 +52,20 @@ class DeviceTokenService(
         logger.debug("Unregistered device {} for user {}", deviceId, userId)
     }
 
+    /**
+     * APNs declared the device's *voip* token dead. Clears that column and nothing else — the same
+     * device's FCM token may be perfectly alive, so deleting the row (the FCM-dead response) would
+     * cost the device every other push too.
+     */
+    @Transactional
+    fun clearVoipToken(userId: String, deviceId: String) {
+        deviceTokenRepository.findById(DeviceTokenId(userId, deviceId)).orElse(null)?.let {
+            it.voipToken = null
+            it.updatedAt = Instant.now()
+            logger.info("Cleared the dead voip token of device {} for user {}", deviceId, userId)
+        }
+    }
+
     @Transactional(readOnly = true)
     fun tokensOf(userId: String): List<DeviceToken> = deviceTokenRepository.findAllByUserId(userId)
 }

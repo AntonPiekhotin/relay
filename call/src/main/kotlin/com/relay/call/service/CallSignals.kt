@@ -71,5 +71,17 @@ object CallSignals {
         const val RING_TIMEOUT = "ring_timeout"
         const val ANSWERED_ELSEWHERE = "answered_elsewhere"
         const val SETTLED_ELSEWHERE = "settled_elsewhere"
+
+        /** Group calls only: every invitee declined before anybody joined. */
+        const val ALL_DECLINED = "all_declined"
+
+        /** Group calls only: the last joined participant left. */
+        const val ALL_LEFT = "all_left"
+
+        /** Group calls only: this user joined on another of their devices — stop ringing. */
+        const val JOINED_ELSEWHERE = "joined_elsewhere"
+
+        /** Group calls only: the SFU reported this participant gone rather than the client. */
+        const val DISCONNECTED = "disconnected"
     }
 }

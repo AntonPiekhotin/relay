@@ -8,6 +8,7 @@ import com.relay.notification.model.dto.RegisterDeviceTokenRequest
 import com.relay.notification.output.push.PushMessage
 import com.relay.notification.output.push.PushResult
 import com.relay.notification.output.push.PushSender
+import com.relay.notification.output.push.VoipPushSender
 import com.relay.notification.service.DeviceTokenService
 import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
@@ -53,6 +54,9 @@ class NotificationRequestConsumerIT {
         @Bean
         @Primary
         fun recordingPushSender() = RecordingPushSender()
+
+        @Bean
+        fun recordingVoipPushSender() = RecordingVoipPushSender()
     }
 
     class RecordingPushSender : PushSender {
@@ -67,15 +71,31 @@ class NotificationRequestConsumerIT {
         }
     }
 
+    /** Stands in for the APNs adapter, which in production exists only when a .p8 key does. */
+    class RecordingVoipPushSender : VoipPushSender {
+        val sent = CopyOnWriteArrayList<Pair<DeviceToken, PushMessage>>()
+
+        /** Devices whose next VoIP send reports a permanently dead *voip* token. */
+        val deadVoipDevices = CopyOnWriteArrayList<String>()
+
+        override fun send(token: DeviceToken, message: PushMessage): PushResult {
+            sent += token to message
+            return if (token.deviceId in deadVoipDevices) PushResult.TOKEN_DEAD else PushResult.SENT
+        }
+    }
+
     @Autowired private lateinit var deviceTokenService: DeviceTokenService
     @Autowired private lateinit var kafkaTemplate: KafkaTemplate<String, String>
     @Autowired private lateinit var jsonMapper: JsonMapper
     @Autowired private lateinit var pushSender: RecordingPushSender
+    @Autowired private lateinit var voipPushSender: RecordingVoipPushSender
 
     @BeforeTest
     fun reset() {
         pushSender.sent.clear()
         pushSender.deadDevices.clear()
+        voipPushSender.sent.clear()
+        voipPushSender.deadVoipDevices.clear()
     }
 
     private fun publish(request: NotificationRequestedEvent) {
@@ -265,5 +285,92 @@ class NotificationRequestConsumerIT {
         assertEquals(NotificationRequestedEvent.KIND_MISSED_CALL, message.data["kind"])
         assertEquals("call-2", message.data["callId"])
         assertEquals("alice", message.data["callerId"])
+    }
+
+    // ---- APNs VoIP routing ----
+
+    private fun registerWithVoip(userId: String, deviceId: String) {
+        deviceTokenService.register(
+            userId,
+            RegisterDeviceTokenRequest(
+                deviceId = deviceId, platform = "ios",
+                fcmToken = "fcm-$deviceId", voipToken = "voip-$deviceId"
+            )
+        )
+    }
+
+    private fun incomingCall(recipientId: String, callId: String = "call-voip") =
+        NotificationRequestedEvent.incomingCall(
+            recipientId = recipientId,
+            callId = callId,
+            callerId = "alice",
+            media = "audio",
+            requestedAt = Instant.parse("2026-07-27T10:00:00Z"),
+            ringExpiresAt = Instant.parse("2026-07-27T10:00:40Z"),
+            callKind = NotificationRequestedEvent.CALL_KIND_GROUP
+        )
+
+    @Test
+    fun `an incoming call rides VoIP where a device can take it, and FCM everywhere else`() {
+        registerWithVoip("kate", "kate-iphone")
+        register("kate", "kate-android") // android — no voip, whatever the columns say
+        register("kate", "kate-ipad", platform = "ios") // ios but never registered a voip token
+
+        publish(incomingCall("kate"))
+
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted {
+            assertEquals(1, voipPushSender.sent.size)
+            assertEquals(2, pushSender.sent.size)
+        }
+        val (voipDevice, voipMessage) = voipPushSender.sent.single()
+        assertEquals("kate-iphone", voipDevice.deviceId)
+        assertEquals(
+            Instant.parse("2026-07-27T10:00:40Z"), voipMessage.expiresAt,
+            "APNs must discard the push at the ring deadline, not deliver it late"
+        )
+        assertEquals("group", voipMessage.data["callKind"])
+        assertEquals(
+            setOf("kate-android", "kate-ipad"),
+            pushSender.sent.map { it.first.deviceId }.toSet(),
+            "the device rung over VoIP is not also pushed over FCM"
+        )
+    }
+
+    @Test
+    fun `a dead voip token loses the column, keeps the row, and falls back to FCM`() {
+        registerWithVoip("liam", "liam-iphone")
+        voipPushSender.deadVoipDevices += "liam-iphone"
+
+        publish(incomingCall("liam"))
+
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted {
+            assertEquals(1, voipPushSender.sent.size)
+            assertEquals(1, pushSender.sent.size, "the device still gets the call, over FCM")
+        }
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted {
+            val stored = deviceTokenService.tokensOf("liam").single()
+            assertEquals(null, stored.voipToken, "the dead voip token is cleared")
+            assertEquals("fcm-liam-iphone", stored.fcmToken, "the FCM half of the row survives")
+        }
+    }
+
+    @Test
+    fun `a missed call never rides VoIP even where a voip token exists`() {
+        registerWithVoip("mia", "mia-iphone")
+
+        publish(
+            NotificationRequestedEvent.missedCall(
+                recipientId = "mia",
+                callId = "call-3",
+                callerId = "alice",
+                media = "audio",
+                requestedAt = Instant.parse("2026-07-27T10:00:40Z")
+            )
+        )
+
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted {
+            assertEquals(1, pushSender.sent.size)
+        }
+        assertEquals(0, voipPushSender.sent.size, "PushKit for a non-call push gets the app killed by iOS")
     }
 }

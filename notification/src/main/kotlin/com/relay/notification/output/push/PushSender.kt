@@ -1,6 +1,7 @@
 package com.relay.notification.output.push
 
 import com.relay.notification.model.DeviceToken
+import java.time.Instant
 
 /**
  * A push notification ready for transport: [title]/[body] for the visible part, [data] for what
@@ -11,12 +12,19 @@ import com.relay.notification.model.DeviceToken
  * the app's message handler — so the app cannot raise a full-screen incoming-call UI with answer and
  * decline actions. Sending data only hands that decision back to the client. A plain chat message
  * wants the opposite, which is why this defaults to false.
+ *
+ * [voipPreferred] marks the one kind that should ride APNs VoIP where a device can take it — an
+ * incoming call, which is the only push allowed to use PushKit at all (Apple kills apps that ring
+ * CallKit for anything else). [expiresAt] becomes the transport-level expiry, because a call push
+ * delivered after the ring timeout is worse than none.
  */
 data class PushMessage(
     val title: String,
     val body: String,
     val data: Map<String, String>,
-    val dataOnly: Boolean = false
+    val dataOnly: Boolean = false,
+    val voipPreferred: Boolean = false,
+    val expiresAt: Instant? = null
 )
 
 enum class PushResult {
