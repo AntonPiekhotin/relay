@@ -47,6 +47,21 @@ class Dialog(
     @Column(name = "direct_key", length = 129)
     val directKey: String? = null,
 
+    /**
+     * Null for a [DialogType.DIRECT], which is named by its members. Required app-side for every
+     * group a client creates; legacy `/internal`-created groups were backfilled with `'Group'`.
+     */
+    @Column(name = "title", length = 128)
+    var title: String? = null,
+
+    /**
+     * The group's single admin — the creator, and the only caller allowed to rename, add, remove,
+     * or delete. Null for a [DialogType.DIRECT] and for legacy `/internal`-created groups, which
+     * answer 403 to every owner-only mutation rather than having an owner invented for them.
+     */
+    @Column(name = "owner_id", length = 64, updatable = false)
+    val ownerId: String? = null,
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "dialog_participants", joinColumns = [JoinColumn(name = "dialog_id")])
     @Column(name = "user_id", nullable = false, length = 64)

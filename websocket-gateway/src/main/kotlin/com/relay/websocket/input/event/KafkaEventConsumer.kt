@@ -3,6 +3,7 @@ package com.relay.websocket.input.event
 import com.relay.common.event.CallSignalEvent
 import com.relay.common.event.CallSignalKeys
 import com.relay.common.event.CallSignalVerbs
+import com.relay.common.event.GroupChangeTypes
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
@@ -10,12 +11,14 @@ import com.relay.common.event.NotificationRequestedEvent
 import com.relay.common.event.PresenceEvent
 import com.relay.common.event.TypingEvent
 import com.relay.websocket.output.event.NotificationEventProducer
+import com.relay.websocket.output.http.DialogMembershipResolver
 import com.relay.websocket.output.socket.FrameDispatcher
 import com.relay.websocket.presence.PresenceService
 import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.SessionRegistry
 import com.relay.websocket.util.EventCodec
 import java.time.Instant
+import org.slf4j.LoggerFactory
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
 
@@ -34,8 +37,11 @@ class KafkaEventConsumer(
     private val codec: EventCodec,
     private val registry: SessionRegistry,
     private val notificationEventProducer: NotificationEventProducer,
-    private val presenceService: PresenceService
+    private val presenceService: PresenceService,
+    private val membershipResolver: DialogMembershipResolver
 ) {
+
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     /**
      * The outcome of a send: ack (or error) to the exact session that sent; `message.new` to
@@ -59,7 +65,56 @@ class KafkaEventConsumer(
             }
             is MessageDeliveryEvent.Rejected -> handleRejectedMessage(event)
             is MessageDeliveryEvent.Read -> sendReadReceipt(event)
+            is MessageDeliveryEvent.GroupChanged -> onGroupChanged(event)
         }
+    }
+
+    /**
+     * A group changed shape. Order matters inside this handler:
+     *
+     * 1. **Invalidate the membership cache first.** The cached list is also the authorization
+     *    answer for presence and typing, so it must be gone before anything here — or any frame
+     *    arriving after this one — re-resolves.
+     * 2. Fix up this node's presence subscriptions (tear down the removed member's watch, refresh
+     *    the others).
+     * 3. Fan the frame out — to every recipient *including* the actor's own devices: the system
+     *    message has to render in the actor's chat too, and clients dedupe on `message_id` exactly
+     *    as they do for `message.new`.
+     *
+     * No offline push: a member who missed this discovers it from the dialog list and history on
+     * reconnect, the same recovery every dropped frame relies on (`docs/PROTOCOL.md` §7).
+     */
+    private fun onGroupChanged(event: MessageDeliveryEvent.GroupChanged) {
+        membershipResolver.invalidate(event.dialogId)
+        presenceService.onGroupChanged(event)
+
+        if (event.change == GroupChangeTypes.GROUP_DELETED) {
+            dispatcher.deliverToUsers(
+                event.recipientIds,
+                OutboundFrame.DialogDeleted(dialogId = event.dialogId, actorId = event.actorId)
+            )
+            return
+        }
+        val kind = WIRE_KIND_BY_CHANGE[event.change]
+        val messageId = event.messageId
+        if (kind == null || messageId == null) {
+            // A change this gateway does not know is not an error — the cache invalidation and
+            // presence fix-up above still ran, which is the part that cannot wait for a deploy.
+            logger.debug("No frame for group change {} on dialog {}", event.change, event.dialogId)
+            return
+        }
+        dispatcher.deliverToUsers(
+            event.recipientIds,
+            OutboundFrame.MessageSystem(
+                messageId = messageId,
+                dialogId = event.dialogId,
+                actorId = event.actorId,
+                kind = kind,
+                targetUserId = event.targetUserId,
+                title = event.title,
+                createdAt = event.sentAt
+            )
+        )
     }
 
     private fun sendReadReceipt(event: MessageDeliveryEvent.Read) {
@@ -130,6 +185,22 @@ class KafkaEventConsumer(
                 OutboundFrame.Error(event.code, event.reason, event.clientMessageId)
             )
         }
+    }
+
+    private companion object {
+        /**
+         * Event vocabulary → wire vocabulary, translated rather than lowercased in place, for the
+         * same reason [PresenceService.deliver] maps statuses: the internal spelling must be able
+         * to change without silently changing the client contract. `GROUP_DELETED` is absent — it
+         * becomes a `dialog.deleted` frame, not a system message.
+         */
+        val WIRE_KIND_BY_CHANGE: Map<String, String> = mapOf(
+            GroupChangeTypes.GROUP_CREATED to "group_created",
+            GroupChangeTypes.MEMBER_ADDED to "member_added",
+            GroupChangeTypes.MEMBER_REMOVED to "member_removed",
+            GroupChangeTypes.MEMBER_LEFT to "member_left",
+            GroupChangeTypes.GROUP_RENAMED to "group_renamed"
+        )
     }
 
     /**

@@ -140,4 +140,61 @@ class DialogQueryServiceIT {
         val ex = assertFailsWith<RelayException> { dialogQueryService.metadata(userId("mallory"), dialog) }
         assertEquals(404, ex.statusCode)
     }
+
+    /**
+     * The property that makes keyset pagination worth its complexity: walking the pages visits
+     * every dialog exactly once, in the same order the unpaginated list had — including the seam
+     * between "active" rows and null-`lastMessageAt` rows, which is where a broken cursor predicate
+     * drops or repeats.
+     */
+    @Test
+    fun `paging walks every dialog exactly once across the null-lastMessageAt seam`() {
+        val alice = userId("alice")
+        val active = (1..3).map { dialogOf(alice, userId("peer$it")) }
+        repeat(2) { dialogOf(alice, userId("quiet$it")) } // never used — null lastMessageAt
+        active.forEach { send(it, alice) }
+
+        val fullOrder = dialogQueryService.list(alice).dialogs.map { it.dialogId }
+        assertEquals(5, fullOrder.size)
+
+        val walked = mutableListOf<String>()
+        var cursor: String? = null
+        do {
+            val page = dialogQueryService.list(alice, cursor = cursor, limit = 2)
+            walked += page.dialogs.map { it.dialogId }
+            cursor = page.nextCursor
+        } while (cursor != null)
+
+        assertEquals(fullOrder, walked, "pages concatenate to the whole list, no repeats, no gaps")
+    }
+
+    @Test
+    fun `nextCursor is null on a short page and present on a full one`() {
+        val alice = userId("alice")
+        repeat(3) { dialogOf(alice, userId("peer$it")) }
+
+        val full = dialogQueryService.list(alice, cursor = null, limit = 3)
+        val short = dialogQueryService.list(alice, cursor = null, limit = 4)
+
+        assertNotNull(full.nextCursor, "a full page means there is probably more")
+        assertNull(short.nextCursor)
+    }
+
+    @Test
+    fun `a cursor naming a dialog that is not the caller's is a 400`() {
+        val alice = userId("alice")
+        val mallory = userId("mallory")
+        dialogOf(alice, userId("bob"))
+        val someoneElses = dialogOf(mallory, userId("eve"))
+
+        assertEquals(400, assertFailsWith<RelayException> {
+            dialogQueryService.list(alice, cursor = someoneElses, limit = 10)
+        }.statusCode, "a pagination parameter was wrong; nothing was read at that id")
+        assertEquals(400, assertFailsWith<RelayException> {
+            dialogQueryService.list(alice, cursor = UUID.randomUUID().toString(), limit = 10)
+        }.statusCode)
+        assertEquals(400, assertFailsWith<RelayException> {
+            dialogQueryService.list(alice, cursor = "not-a-uuid", limit = 10)
+        }.statusCode)
+    }
 }

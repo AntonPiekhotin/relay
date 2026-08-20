@@ -66,6 +66,24 @@ class DialogMembershipResolverTest {
     }
 
     @Test
+    fun `invalidation forces a re-fetch inside the TTL`() {
+        val resolver = resolver()
+        resolver.resolve("d-1", "alice")
+        resolver.resolve("d-1", "alice")
+        assertEquals(1, client.lookups)
+
+        resolver.invalidate("d-1")
+
+        // The next resolve sees the post-change membership — the group-change path relies on this
+        // being immediate, because the cached list is also the authorization answer.
+        client.withDialog("d-1", "alice")
+        val fresh = assertIs<DialogMembershipResult.Found>(resolver.resolve("d-1", "alice"))
+        assertEquals(listOf("alice"), fresh.participantIds)
+        assertEquals(2, client.lookups)
+        assertIs<DialogMembershipResult.Rejected>(resolver.resolve("d-1", "bob"), "the removed member is out now")
+    }
+
+    @Test
     fun `a full cache keeps answering, it just stops caching`() {
         val resolver = resolver(maxCached = 1)
         client.withDialog("d-2", "alice", "carol")

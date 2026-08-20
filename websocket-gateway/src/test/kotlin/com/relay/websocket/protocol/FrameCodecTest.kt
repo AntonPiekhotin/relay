@@ -66,6 +66,39 @@ class FrameCodecTest {
     }
 
     @Test
+    fun `encodes a system message structured, never as rendered text`() {
+        val json = codec.encode(
+            OutboundFrame.MessageSystem(
+                messageId = "m-sys",
+                dialogId = "d-1",
+                actorId = "alice",
+                kind = "member_added",
+                targetUserId = "carol",
+                title = "team",
+                createdAt = Instant.parse("2026-08-19T10:00:00Z")
+            )
+        )
+
+        assertTrue(json.contains("\"type\":\"message.system\""), "was: $json")
+        assertTrue(json.contains("\"message_id\":\"m-sys\""), "was: $json")
+        assertTrue(json.contains("\"dialog_id\":\"d-1\""), "was: $json")
+        assertTrue(json.contains("\"actor_id\":\"alice\""), "was: $json")
+        assertTrue(json.contains("\"kind\":\"member_added\""), "was: $json")
+        assertTrue(json.contains("\"target_user_id\":\"carol\""), "ids, not names — the client resolves; was: $json")
+        assertTrue(json.contains("\"title\":\"team\""), "was: $json")
+        assertTrue(json.contains("\"created_at\":\"2026-08-19T10:00:00Z\""), "was: $json")
+    }
+
+    @Test
+    fun `encodes a dialog deletion with who did it`() {
+        val json = codec.encode(OutboundFrame.DialogDeleted(dialogId = "d-1", actorId = "alice"))
+
+        assertTrue(json.contains("\"type\":\"dialog.deleted\""), "was: $json")
+        assertTrue(json.contains("\"dialog_id\":\"d-1\""), "was: $json")
+        assertTrue(json.contains("\"actor_id\":\"alice\""), "was: $json")
+    }
+
+    @Test
     fun `encodes errors with ref_id so the client can match the failed action`() {
         val json = codec.encode(OutboundFrame.Error(ErrorCodes.SEND_FAILED, "boom", refId = "c-9"))
 

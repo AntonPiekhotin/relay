@@ -6,6 +6,7 @@ import com.relay.message.model.dto.DialogResponse
 import com.relay.message.model.dto.DialogSummaryResponse
 import com.relay.message.model.dto.MessageHistoryResponse
 import com.relay.message.model.dto.OpenDirectDialogRequest
+import com.relay.message.model.dto.ReadStateResponse
 import com.relay.message.service.DialogQueryService
 import com.relay.message.service.DialogService
 import com.relay.message.service.MessageHistoryService
@@ -57,14 +58,32 @@ class DialogController(
     }
 
     /**
-     * The caller's dialogs, most recently active first, each with their own unread count.
+     * One page of the caller's dialogs, most recently active first, each with their own unread
+     * count.
      *
-     * Unpaginated by contract — see `DialogQueryRepository.findAllForUser` for why that is safe today
-     * and what would change it.
+     * Paginated since group dialogs landed. [cursor] is a `dialogId` from a previous page —
+     * exclusive, like every keyset cursor here — and `nextCursor` in the response is what to pass
+     * back; both absent means first page and last page respectively. `limit` is clamped like
+     * history's.
      */
     @GetMapping
-    fun list(@AuthenticationPrincipal jwt: Jwt): ResponseEntity<DialogListResponse> =
-        ResponseEntity.ok(dialogQueryService.list(jwt.callerId()))
+    fun list(
+        @AuthenticationPrincipal jwt: Jwt,
+        @RequestParam(required = false) cursor: String?,
+        @RequestParam(required = false) limit: Int?
+    ): ResponseEntity<DialogListResponse> =
+        ResponseEntity.ok(dialogQueryService.list(jwt.callerId(), cursor, limit))
+
+    /**
+     * The seen-by snapshot: every member's read cursor. Live movement arrives as `message.read`
+     * frames; this is the state a freshly opened conversation starts from.
+     */
+    @GetMapping("/{dialogId}/read-state")
+    fun readState(
+        @AuthenticationPrincipal jwt: Jwt,
+        @PathVariable dialogId: String
+    ): ResponseEntity<ReadStateResponse> =
+        ResponseEntity.ok(dialogQueryService.readState(jwt.callerId(), dialogId))
 
     /** One dialog. 404 rather than 403 when the caller is not in it — see [DialogQueryService]. */
     @GetMapping("/{dialogId}")

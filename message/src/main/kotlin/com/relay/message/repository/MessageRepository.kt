@@ -21,4 +21,10 @@ interface MessageRepository : JpaRepository<Message, UUID> {
      * does not exist in the dialog being read.
      */
     fun findByIdAndDialogId(id: UUID, dialogId: UUID): Message?
+
+    /**
+     * Group delete only. Messages carry no FK to `dialogs` (a deliberate baseline decision), so
+     * deleting a group has to remove its messages explicitly or leave orphans no query can reach.
+     */
+    fun deleteAllByDialogId(dialogId: UUID): Int
 }

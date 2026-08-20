@@ -217,6 +217,8 @@ class FrameCodec {
             is OutboundFrame.Ack -> "ack"
             is OutboundFrame.MessageNew -> "message.new"
             is OutboundFrame.MessageRead -> "message.read"
+            is OutboundFrame.MessageSystem -> "message.system"
+            is OutboundFrame.DialogDeleted -> "dialog.deleted"
             is OutboundFrame.PresenceUpdate -> "presence.update"
             is OutboundFrame.TypingStart -> "typing.start"
             is OutboundFrame.Notification -> "notification.new"

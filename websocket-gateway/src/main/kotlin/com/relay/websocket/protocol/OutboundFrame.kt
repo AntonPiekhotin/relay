@@ -84,6 +84,30 @@ sealed interface OutboundFrame {
     ) : OutboundFrame
 
     /**
+     * A membership system message: somebody created, renamed, joined, left, or changed a group. A
+     * new frame type rather than a widened `message.new` (invariant 8) — clients that predate
+     * groups ignore it by contract. Structured, never rendered text: [kind] is the §4.1 vocabulary
+     * (`group_created`, `member_added`, ...), [actorId]/[targetUserId] are ids a client resolves
+     * through user-service, [title] is the dialog's current title. Mirrors the row history serves,
+     * so a client merges both by [messageId].
+     */
+    data class MessageSystem(
+        val messageId: String,
+        val dialogId: String,
+        val actorId: String,
+        val kind: String,
+        val targetUserId: String?,
+        val title: String?,
+        val createdAt: Instant
+    ) : OutboundFrame
+
+    /** The group is gone, messages and all. [actorId] is the owner who deleted it. */
+    data class DialogDeleted(
+        val dialogId: String,
+        val actorId: String
+    ) : OutboundFrame
+
+    /**
      * One person's connection state, sent only to sessions that subscribed to a dialog they are in.
      *
      * [lastSeen] is null while they are online — the status already says they are here — and null

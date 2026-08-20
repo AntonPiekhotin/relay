@@ -1,5 +1,7 @@
 package com.relay.websocket.presence
 
+import com.relay.common.event.GroupChangeTypes
+import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.PresenceEvent
 import com.relay.common.event.PresenceStatuses
 import com.relay.common.event.TypingEvent
@@ -95,6 +97,43 @@ class PresenceService(
      */
     fun unsubscribe(session: RelaySession, dialogId: String) {
         subscriptions.unsubscribe(session, dialogId)
+    }
+
+    /**
+     * Re-points this node's subscriptions after a group changed shape. Runs *after* the membership
+     * cache was invalidated, so every re-subscribe below resolves fresh.
+     *
+     * - A **removed or left** member's own sessions lose their watch on the dialog now, not when
+     *   the TTL would have noticed — their next subscribe attempt is refused by message-service.
+     * - A **deleted** group's subscriptions die on every session that held one.
+     * - Everyone else re-subscribes: it replaces the dialog's subjects and re-sends snapshots,
+     *   which §4.2 already defines as idempotent — and it is what puts a newly added member's dot
+     *   on the screens of members already watching. A session whose user turns out to be out of
+     *   the dialog gets a Rejected resolve and just loses the subscription.
+     */
+    fun onGroupChanged(event: MessageDeliveryEvent.GroupChanged) {
+        if (event.change == GroupChangeTypes.GROUP_DELETED) {
+            subscriptions.sessionsWithDialog(event.dialogId).forEach { unsubscribe(it, event.dialogId) }
+            return
+        }
+        val outcast = event.targetUserId?.takeIf {
+            event.change == GroupChangeTypes.MEMBER_REMOVED || event.change == GroupChangeTypes.MEMBER_LEFT
+        }
+        outcast?.let { userId ->
+            registry.sessionsOf(userId).forEach { unsubscribe(it, event.dialogId) }
+        }
+        subscriptions.sessionsWithDialog(event.dialogId).forEach { session ->
+            when (val result = subscribe(session, event.dialogId)) {
+                is PresenceSubscribeResult.Subscribed -> Unit
+                is PresenceSubscribeResult.Rejected -> {
+                    subscriptions.unsubscribe(session, event.dialogId)
+                    logger.debug(
+                        "Dropped presence subscription of session {} on dialog {} after group change: {}",
+                        session.sessionId, event.dialogId, result.code
+                    )
+                }
+            }
+        }
     }
 
     /** Called when a socket closes, so a dead session stops being a subscriber. */

@@ -1,6 +1,8 @@
 package com.relay.websocket.presence
 
+import com.relay.common.event.GroupChangeTypes
 import com.relay.common.event.KafkaTopics
+import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.PresenceEvent
 import com.relay.common.event.PresenceStatuses
 import com.relay.common.event.TypingEvent
@@ -55,11 +57,13 @@ class PresenceServiceTest {
     @Suppress("UNCHECKED_CAST")
     private val kafkaTemplate = mock(KafkaTemplate::class.java) as KafkaTemplate<String, String>
 
+    private val membershipResolver = DialogMembershipResolver(membershipClient, MessageClientProperties())
+
     private val presence = PresenceService(
         subscriptions = subscriptions,
         lastSeen = lastSeen,
         registry = registry,
-        membership = DialogMembershipResolver(membershipClient, MessageClientProperties()),
+        membership = membershipResolver,
         dispatcher = FrameDispatcher(registry),
         producer = PresenceEventProducer(kafkaTemplate, jsonMapper)
     )
@@ -404,5 +408,78 @@ class PresenceServiceTest {
         presence.deliver(TypingEvent("d-1", "carol", listOf("someone-on-another-node")))
 
         alice.hasNoFrames()
+    }
+
+    // ---- group changes ----
+
+    /** The consumer invalidates the cache before calling [PresenceService.onGroupChanged]; mirror that order. */
+    private fun groupChanged(change: String, dialogId: String, actorId: String, targetUserId: String? = null) {
+        membershipResolver.invalidate(dialogId)
+        presence.onGroupChanged(
+            MessageDeliveryEvent.GroupChanged(
+                dialogId = dialogId,
+                change = change,
+                actorId = actorId,
+                targetUserId = targetUserId,
+                title = "team",
+                messageId = "m-sys",
+                sentAt = Instant.parse("2026-08-19T10:00:00Z"),
+                recipientIds = emptyList() // the frame fan-out is the consumer's job, not this class's
+            )
+        )
+    }
+
+    @Test
+    fun `a removed member's live watch on the dialog dies with the event, not with the TTL`() {
+        val bob = session("bob")
+        presence.subscribe(bob, "d-1")
+        assertIs<OutboundFrame.PresenceUpdate>(bob.nextFrame())
+        membershipClient.withDialog("d-1", "alice") // the commit already happened; bob is out
+
+        groupChanged(GroupChangeTypes.MEMBER_REMOVED, "d-1", actorId = "alice", targetUserId = "bob")
+
+        presence.announceOnline("alice")
+        drainBroker()
+        bob.hasNoFrames()
+    }
+
+    @Test
+    fun `an added member appears on the screens of sessions already watching the dialog`() {
+        val alice = session("alice")
+        presence.subscribe(alice, "d-1")
+        assertIs<OutboundFrame.PresenceUpdate>(alice.nextFrame()) // the snapshot of bob
+        membershipClient.withDialog("d-1", "alice", "bob", "carol")
+
+        groupChanged(GroupChangeTypes.MEMBER_ADDED, "d-1", actorId = "alice", targetUserId = "carol")
+
+        // The re-subscribe re-sends snapshots for the fresh membership — idempotent by §4.2 — and
+        // that refresh is what puts carol's dot on alice's screen without a client round trip.
+        val subjects = listOf(
+            assertIs<OutboundFrame.PresenceUpdate>(alice.nextFrame()).userId,
+            assertIs<OutboundFrame.PresenceUpdate>(alice.nextFrame()).userId
+        )
+        assertEquals(setOf("bob", "carol"), subjects.toSet())
+
+        presence.announceOnline("carol")
+        drainBroker()
+        assertEquals("carol", assertIs<OutboundFrame.PresenceUpdate>(alice.nextFrame()).userId)
+    }
+
+    @Test
+    fun `a deleted group tears down every subscription held for it`() {
+        val alice = session("alice")
+        val bob = session("bob")
+        presence.subscribe(alice, "d-1")
+        presence.subscribe(bob, "d-1")
+        assertIs<OutboundFrame.PresenceUpdate>(alice.nextFrame())
+        assertIs<OutboundFrame.PresenceUpdate>(bob.nextFrame())
+
+        groupChanged(GroupChangeTypes.GROUP_DELETED, "d-1", actorId = "alice")
+
+        presence.announceOnline("alice")
+        presence.announceOnline("bob")
+        drainBroker()
+        alice.hasNoFrames()
+        bob.hasNoFrames()
     }
 }

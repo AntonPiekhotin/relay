@@ -3,6 +3,7 @@ package com.relay.websocket.input.event
 import com.relay.common.event.CallSignalEvent
 import com.relay.common.event.CallSignalKeys
 import com.relay.common.event.CallSignalVerbs
+import com.relay.common.event.GroupChangeTypes
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.event.NotificationCreatedEvent
@@ -11,7 +12,10 @@ import com.relay.common.event.PresenceEvent
 import com.relay.common.event.PresenceStatuses
 import com.relay.common.event.TypingEvent
 import com.relay.common.model.UserPrincipal
+import com.relay.websocket.output.http.DialogMembershipClient
+import com.relay.websocket.output.http.DialogMembershipResolver
 import com.relay.websocket.presence.PresenceSubscriptions
+import com.relay.websocket.presence.StubDialogMembershipClient
 import com.relay.websocket.protocol.OutboundFrame
 import com.relay.websocket.session.RelaySession
 import com.relay.websocket.session.SessionRegistry
@@ -29,6 +33,9 @@ import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.context.TestConfiguration
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Primary
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory
 import org.springframework.kafka.core.KafkaTemplate
@@ -68,8 +75,22 @@ import tools.jackson.databind.json.JsonMapper
 )
 class KafkaEventConsumerIT {
 
+    /**
+     * The group-change path re-resolves membership after invalidating the cache; over HTTP that
+     * would need a live message-service, so the client port is stubbed. Every other test here
+     * never touches it.
+     */
+    @TestConfiguration(proxyBeanMethods = false)
+    class StubMembershipConfig {
+        @Bean
+        @Primary
+        fun stubMembershipClient(): DialogMembershipClient = StubDialogMembershipClient()
+    }
+
     @Autowired private lateinit var registry: SessionRegistry
     @Autowired private lateinit var subscriptions: PresenceSubscriptions
+    @Autowired private lateinit var membershipResolver: DialogMembershipResolver
+    @Autowired private lateinit var membershipClient: DialogMembershipClient
     @Autowired private lateinit var kafkaTemplate: KafkaTemplate<String, String>
     @Autowired private lateinit var jsonMapper: JsonMapper
     @Autowired private lateinit var endpoints: KafkaListenerEndpointRegistry
@@ -551,6 +572,103 @@ class KafkaEventConsumerIT {
         val typing = assertIs<OutboundFrame.TypingStart>(bob.nextFrame())
         assertEquals("d-typing", typing.dialogId)
         assertEquals("alice-typist", typing.userId)
+    }
+
+    // ---- group changes ----
+
+    private fun groupChanged(
+        change: String,
+        dialogId: String,
+        actorId: String,
+        recipients: List<String>,
+        targetUserId: String? = null,
+        messageId: String? = "m-sys-1"
+    ) = MessageDeliveryEvent.GroupChanged(
+        dialogId = dialogId,
+        change = change,
+        actorId = actorId,
+        targetUserId = targetUserId,
+        title = "team",
+        messageId = messageId,
+        sentAt = Instant.parse("2026-08-19T10:00:00Z"),
+        recipientIds = recipients
+    )
+
+    @Test
+    fun `a group change invalidates the cached membership and reaches everyone including the actor`() {
+        val alice = sessionFor("alice-group")
+        val bob = sessionFor("bob-group")
+        val stub = (membershipClient as StubDialogMembershipClient)
+            .withDialog("d-group-inv", "alice-group", "bob-group")
+        membershipResolver.resolve("d-group-inv", "alice-group")
+        val lookupsBefore = stub.lookups
+
+        publish(
+            KafkaTopics.MESSAGES_DELIVERY,
+            groupChanged(
+                GroupChangeTypes.MEMBER_ADDED, "d-group-inv", actorId = "alice-group",
+                recipients = listOf("alice-group", "bob-group", "carol-group"), targetUserId = "carol-group"
+            )
+        )
+
+        // Both connected recipients get the frame — the actor's devices included, since the system
+        // message has to render in their chat too.
+        listOf(alice, bob).forEach { session ->
+            val frame = assertIs<OutboundFrame.MessageSystem>(session.nextFrame())
+            assertEquals("member_added", frame.kind, "translated to the wire vocabulary, not passed through")
+            assertEquals("carol-group", frame.targetUserId)
+            assertEquals("alice-group", frame.actorId)
+            assertEquals("m-sys-1", frame.messageId)
+        }
+
+        // The frame having arrived proves the listener ran, and the listener invalidates first —
+        // so this resolve must go back to the client instead of the cache.
+        membershipResolver.resolve("d-group-inv", "alice-group")
+        assertEquals(lookupsBefore + 1, stub.lookups, "the cached membership must not survive the change")
+    }
+
+    @Test
+    fun `a removed member gets the frame and loses their presence watch on the dialog`() {
+        val bob = sessionFor("bob-removed")
+        subscriptions.subscribe(bob, "d-group-rm", setOf("alice-remover"))
+
+        publish(
+            KafkaTopics.MESSAGES_DELIVERY,
+            groupChanged(
+                GroupChangeTypes.MEMBER_REMOVED, "d-group-rm", actorId = "alice-remover",
+                recipients = listOf("alice-remover", "bob-removed"), targetUserId = "bob-removed"
+            )
+        )
+
+        assertEquals(
+            "member_removed",
+            assertIs<OutboundFrame.MessageSystem>(bob.nextFrame()).kind,
+            "the removed member needs the frame that says they are out"
+        )
+        assertEquals(
+            emptyList(),
+            subscriptions.subscribersOf("alice-remover").toList(),
+            "their watch dies with the event, not with the cache TTL"
+        )
+    }
+
+    @Test
+    fun `a group deletion sends dialog-deleted and tears down the dialog's subscriptions`() {
+        val alice = sessionFor("alice-del")
+        subscriptions.subscribe(alice, "d-group-del", setOf("bob-del"))
+
+        publish(
+            KafkaTopics.MESSAGES_DELIVERY,
+            groupChanged(
+                GroupChangeTypes.GROUP_DELETED, "d-group-del", actorId = "owner-del",
+                recipients = listOf("alice-del"), messageId = null
+            )
+        )
+
+        val frame = assertIs<OutboundFrame.DialogDeleted>(alice.nextFrame())
+        assertEquals("d-group-del", frame.dialogId)
+        assertEquals("owner-del", frame.actorId)
+        assertEquals(emptyList(), subscriptions.subscribersOf("bob-del").toList())
     }
 
     @Test

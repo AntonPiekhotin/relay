@@ -61,6 +61,24 @@ class PresenceSubscriptions {
         released.forEach { drop(it, session) }
     }
 
+    /**
+     * The live sessions on this node that hold a subscription for [dialogId] — the group-change
+     * fix-up path, which needs "who is watching this conversation" rather than "who is watching
+     * this person". A scan of the session map is fine here: membership changes are orders of
+     * magnitude rarer than the fan-outs the two indexed views exist for.
+     */
+    fun sessionsWithDialog(dialogId: String): List<RelaySession> {
+        val sessionIds = dialogsBySession.entries
+            .filter { dialogId in it.value }
+            .map { it.key }
+            .toSet()
+        if (sessionIds.isEmpty()) return emptyList()
+        return subscribersBySubject.values
+            .flatten()
+            .distinct()
+            .filter { it.sessionId in sessionIds && !it.isEnding }
+    }
+
     /** Everything this session subscribed to. Called when its socket closes. */
     fun forget(session: RelaySession) {
         var released: Set<String> = emptySet()

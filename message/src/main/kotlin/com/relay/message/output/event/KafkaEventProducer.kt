@@ -3,7 +3,9 @@ package com.relay.message.output.event
 import com.relay.common.event.KafkaTopics
 import com.relay.common.event.MessageDeliveryEvent
 import com.relay.common.observability.RequestIdContext
+import com.relay.message.model.dto.event.GroupDialogChanged
 import com.relay.message.model.dto.event.MessagePersisted
+import java.time.Instant
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.stereotype.Component
@@ -44,6 +46,29 @@ class KafkaEventProducer(
         )
     }
 
+    /**
+     * Same shape and same at-most-once tradeoff as [onMessagePersisted]. A lost `GroupChanged`
+     * leaves the gateway's membership cache stale until its TTL expires and clients discover the
+     * change from the dialog list — the backstops this event only tightens, never replaces.
+     *
+     * `sentAt` falls back to now only for a group delete, which has no system message to anchor to.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    fun onGroupDialogChanged(event: GroupDialogChanged) {
+        publish(
+            MessageDeliveryEvent.GroupChanged(
+                dialogId = event.dialogId,
+                change = event.change,
+                actorId = event.actorId,
+                targetUserId = event.targetUserId,
+                title = event.title,
+                messageId = event.message?.id?.toString(),
+                sentAt = event.message?.sentAt ?: Instant.now(),
+                recipientIds = event.recipientIds.toList()
+            )
+        )
+    }
+
     fun publish(event: MessageDeliveryEvent) {
         val key = event.getKey()
         // Captured here, restored in the callback: whenComplete runs on Kafka's producer I/O thread,
@@ -67,6 +92,7 @@ class KafkaEventProducer(
             is MessageDeliveryEvent.Accepted -> dialogId
             is MessageDeliveryEvent.Rejected -> senderId
             is MessageDeliveryEvent.Read -> dialogId
+            is MessageDeliveryEvent.GroupChanged -> dialogId
         }
     }
 }

@@ -18,7 +18,9 @@ data class MessageRow(
     val senderId: String,
     val text: String,
     val sentAt: Instant,
-    val clientMessageId: String
+    val clientMessageId: String,
+    val kind: String,
+    val targetUserId: String?
 )
 
 /**
@@ -48,7 +50,7 @@ class MessageQueryRepository(
     fun findPageBefore(dialogId: UUID, beforeSentAt: Instant, beforeId: UUID, limit: Int): List<MessageRow> =
         jdbc.sql(
             """
-            select id, dialog_id, sender_id, text, sent_at, client_message_id
+            select id, dialog_id, sender_id, text, sent_at, client_message_id, kind, target_user_id
             from messages
             where dialog_id = :dialogId
               and (sent_at, id) < (:beforeSentAt, :beforeId)
@@ -74,7 +76,7 @@ class MessageQueryRepository(
     fun findPageAfter(dialogId: UUID, afterSentAt: Instant, afterId: UUID, limit: Int): List<MessageRow> =
         jdbc.sql(
             """
-            select id, dialog_id, sender_id, text, sent_at, client_message_id
+            select id, dialog_id, sender_id, text, sent_at, client_message_id, kind, target_user_id
             from messages
             where dialog_id = :dialogId
               and (sent_at, id) > (:afterSentAt, :afterId)
@@ -130,6 +132,8 @@ class MessageQueryRepository(
         senderId = rs.getString("sender_id"),
         text = rs.getString("text"),
         sentAt = rs.getObject("sent_at", OffsetDateTime::class.java).toInstant(),
-        clientMessageId = rs.getString("client_message_id")
+        clientMessageId = rs.getString("client_message_id"),
+        kind = rs.getString("kind"),
+        targetUserId = rs.getString("target_user_id")
     )
 }

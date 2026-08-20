@@ -3,6 +3,7 @@ package com.relay.message.service
 import com.relay.common.exception.RelayException
 import com.relay.message.config.MessageProperties
 import com.relay.message.model.Message
+import com.relay.message.model.MessageKind
 import com.relay.message.model.dto.HistoryMessageResponse
 import com.relay.message.model.dto.MessageHistoryResponse
 import com.relay.message.repository.MessageQueryRepository
@@ -104,14 +105,20 @@ class MessageHistoryService(
      */
     private fun nextCursor(rows: List<MessageRow>, pageSize: Int): String? =
         if (rows.size == pageSize) rows.last().id.toString() else null
-    /** [clientMessageId] is the sender's own key; nobody else has any use for it. See the DTO. */
+    /**
+     * [clientMessageId] is the sender's own key; nobody else has any use for it. See the DTO.
+     * A system row's key is server-minted and means nothing even to the actor, so it is withheld
+     * from everyone — a client merges system rows by `messageId` alone.
+     */
     private fun MessageRow.toResponse(callerId: String) = HistoryMessageResponse(
         messageId = id.toString(),
         dialogId = dialogId.toString(),
         senderId = senderId,
         text = text,
         createdAt = sentAt,
-        clientMsgId = clientMessageId.takeIf { senderId == callerId }
+        clientMsgId = clientMessageId.takeIf { senderId == callerId && kind == MessageKind.USER.name },
+        kind = kind.lowercase(),
+        targetUserId = targetUserId
     )
 
     companion object {

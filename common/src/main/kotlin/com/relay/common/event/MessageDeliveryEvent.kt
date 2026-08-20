@@ -17,7 +17,8 @@ import java.time.Instant
 @JsonSubTypes(
     JsonSubTypes.Type(value = MessageDeliveryEvent.Accepted::class, name = "ACCEPTED"),
     JsonSubTypes.Type(value = MessageDeliveryEvent.Rejected::class, name = "REJECTED"),
-    JsonSubTypes.Type(value = MessageDeliveryEvent.Read::class, name = "READ")
+    JsonSubTypes.Type(value = MessageDeliveryEvent.Read::class, name = "READ"),
+    JsonSubTypes.Type(value = MessageDeliveryEvent.GroupChanged::class, name = "GROUP_CHANGED")
 )
 sealed interface MessageDeliveryEvent {
 
@@ -71,6 +72,30 @@ sealed interface MessageDeliveryEvent {
         val readerSessionId: String?,
         val upToMessageId: String,
         val lastReadAt: Instant,
+        val recipientIds: List<String>
+    ) : MessageDeliveryEvent
+
+    /**
+     * A group dialog changed shape: [change] is a [GroupChangeTypes] value. Shares this topic,
+     * keyed by the same dialogId, so a membership change can never overtake the messages sent
+     * before it — the gateway must invalidate its cached membership for [dialogId] *in order*
+     * with the frames that membership produced.
+     *
+     * [recipientIds] is the post-change membership plus the removed or left user, who needs the
+     * frame that tells them they are out. [messageId] is the persisted system message; it is null
+     * only for `GROUP_DELETED`, which deletes the dialog's messages instead of adding one.
+     * [targetUserId] is the member the change is about (null for create/rename/delete; equal to
+     * [actorId] for `MEMBER_LEFT`). [title] is the dialog's current title — the new one on
+     * `GROUP_RENAMED`.
+     */
+    data class GroupChanged(
+        val dialogId: String,
+        val change: String,
+        val actorId: String,
+        val targetUserId: String? = null,
+        val title: String? = null,
+        val messageId: String? = null,
+        val sentAt: Instant,
         val recipientIds: List<String>
     ) : MessageDeliveryEvent
 }

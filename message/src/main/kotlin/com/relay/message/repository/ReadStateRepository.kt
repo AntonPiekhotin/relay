@@ -1,10 +1,18 @@
 package com.relay.message.repository
 
 import java.time.Instant
+import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.stereotype.Repository
+
+/** One member's cursor, as the seen-by snapshot returns it. */
+data class ReadStateRow(
+    val userId: String,
+    val lastReadId: UUID,
+    val lastReadAt: Instant
+)
 
 /**
  * The per-user read cursor. Native SQL rather than an entity, because both operations it needs are
@@ -55,4 +63,42 @@ class ReadStateRepository(
             .param("lastReadId", lastReadId)
             .param("now", Instant.now().atOffset(ZoneOffset.UTC))
             .update() == 1
+
+    /**
+     * Every member's cursor in [dialogId] — the seen-by snapshot. A member who has never read is
+     * absent, not present-with-nulls; the client treats absence as "seen nothing".
+     */
+    fun findByDialog(dialogId: UUID): List<ReadStateRow> =
+        jdbc.sql(
+            """
+            select user_id, last_read_id, last_read_at
+            from dialog_read_state
+            where dialog_id = :dialogId
+            order by user_id
+            """
+        )
+            .param("dialogId", dialogId)
+            .query { rs, _ ->
+                ReadStateRow(
+                    userId = rs.getString("user_id"),
+                    lastReadId = rs.getObject("last_read_id", UUID::class.java),
+                    lastReadAt = rs.getObject("last_read_at", OffsetDateTime::class.java).toInstant()
+                )
+            }
+            .list()
+
+    /** Removes one member's cursor — part of removing them from a group. */
+    fun delete(dialogId: UUID, userId: String) {
+        jdbc.sql("delete from dialog_read_state where dialog_id = :dialogId and user_id = :userId")
+            .param("dialogId", dialogId)
+            .param("userId", userId)
+            .update()
+    }
+
+    /** Removes every cursor of a dialog — the FK to `dialogs` makes this precede the group delete. */
+    fun deleteAll(dialogId: UUID) {
+        jdbc.sql("delete from dialog_read_state where dialog_id = :dialogId")
+            .param("dialogId", dialogId)
+            .update()
+    }
 }

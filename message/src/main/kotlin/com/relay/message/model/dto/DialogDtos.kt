@@ -59,8 +59,70 @@ data class DialogSummaryResponse(
     val participantIds: List<String>,
     val lastMessageAt: Instant?,
     val unreadCount: Long,
-    val createdAt: Instant
+    val createdAt: Instant,
+
+    /** Groups only — null for `direct`, whose name is its membership. */
+    val title: String? = null,
+
+    /**
+     * The group's single admin, so a client knows whether to draw the management controls. Null for
+     * `direct` and for legacy admin-less groups, where nobody gets them.
+     */
+    val ownerId: String? = null
 )
 
-/** Unpaginated by contract — see `DialogQueryRepository.findAllForUser`. */
-data class DialogListResponse(val dialogs: List<DialogSummaryResponse>)
+/**
+ * One page of the list. [nextCursor] is a dialog id to pass back as `cursor` for the following
+ * page, null on the last one — the same walk-until-short contract as message history. Additive:
+ * a client that predates pagination never sends `cursor` and reads the first (and, for it,
+ * usually only) page.
+ */
+data class DialogListResponse(
+    val dialogs: List<DialogSummaryResponse>,
+    val nextCursor: String? = null
+)
+
+/**
+ * A group create. [dialogId] is client-supplied and is the idempotency key, the `calls.id` trick
+ * (`docs/DATA.md` §6.1): a group has no natural uniqueness — the same three people may want two
+ * groups — so the client's UUID is what makes a retried create return the group it already made
+ * instead of a twin.
+ */
+data class CreateGroupDialogRequest(
+
+    @field:NotBlank
+    val dialogId: String,
+
+    @field:NotBlank
+    @field:Size(max = 128, message = "title is at most 128 characters")
+    val title: String,
+
+    /** The caller is implicit and added regardless — a client cannot create a group it is not in. */
+    @field:NotEmpty
+    val memberIds: Set<@Size(max = 64, message = "a user id is at most 64 characters") String>
+)
+
+data class RenameGroupRequest(
+
+    @field:NotBlank
+    @field:Size(max = 128, message = "title is at most 128 characters")
+    val title: String
+)
+
+data class AddMembersRequest(
+
+    @field:NotEmpty
+    val userIds: Set<@Size(max = 64, message = "a user id is at most 64 characters") String>
+)
+
+/**
+ * The seen-by snapshot: every member's read cursor in one dialog. A member who has never read is
+ * absent. Live updates arrive as `message.read` frames; this is the state a client starts from.
+ */
+data class ReadStateResponse(val entries: List<ReadStateEntry>)
+
+data class ReadStateEntry(
+    val userId: String,
+    val lastReadMessageId: String,
+    val lastReadAt: Instant
+)

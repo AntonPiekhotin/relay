@@ -21,7 +21,18 @@ data class HistoryMessageResponse(
     val senderId: String,
     val text: String,
     val createdAt: Instant,
-    val clientMsgId: String?
+    val clientMsgId: String?,
+
+    /**
+     * `user` for what people send; `group_created` / `member_added` / `member_removed` /
+     * `member_left` / `group_renamed` for membership system messages, which live in the same
+     * history so they page and order like any message. Lowercase like every other REST vocabulary.
+     * Additive — a client that predates groups never sees anything but `user` in its dialogs.
+     */
+    val kind: String = "user",
+
+    /** The member a membership system message is about; null for `user` rows. An id, not a name. */
+    val targetUserId: String? = null
 )
 
 /**

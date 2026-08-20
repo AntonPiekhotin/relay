@@ -1,9 +1,11 @@
 package com.relay.message.repository
 
 import com.relay.message.model.Dialog
+import jakarta.persistence.LockModeType
 import java.time.Instant
 import java.util.UUID
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -14,6 +16,17 @@ interface DialogRepository : JpaRepository<Dialog, UUID> {
 
     /** Single-row by construction: `uk_dialogs_direct_key` is what stops a pair having two dialogs. */
     fun findByDirectKey(directKey: String): Dialog?
+
+    /**
+     * `SELECT ... FOR UPDATE`, the entry point of every group mutation. The row lock is what makes
+     * the 50-member cap and every membership transition race-free: two adds, an add against a
+     * leave, a leave against a delete — whatever the interleaving, the second transaction waits and
+     * then sees the first one's committed membership. The same instinct as invariant 11's group-call
+     * locking: if concurrency can break it, the database serializes it.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select d from Dialog d where d.id = :id")
+    fun findByIdForUpdate(@Param("id") id: UUID): Dialog?
 
     /**
      * Moves `last_message_at` forward, never backward, in one statement.
