@@ -36,6 +36,7 @@ class WebSocketSecurityConfig(
             .authorizeHttpRequests { requests ->
                 requests
                     .requestMatchers(props.path).authenticated()
+                    .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                     .anyRequest().denyAll()
             }
             .oauth2ResourceServer { oauth2 ->

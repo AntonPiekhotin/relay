@@ -1,0 +1,195 @@
+# Rendered by the nginx image's envsubst at container start. Only ${RELAY_*} names are
+# substituted (NGINX_ENVSUBST_FILTER in compose) — without that filter envsubst would also eat
+# $host, $remote_addr and every other nginx variable on this page.
+
+# Docker's embedded DNS. Without an explicit resolver nginx resolves each upstream name once at
+# startup and caches it forever, so a container that comes back with a new bridge IP serves 502
+# until nginx is reloaded. The `set $var` + variable-in-proxy_pass pattern below is what forces
+# resolution per request — and it is why every proxy_pass carries an explicit $request_uri, since
+# a variable proxy_pass drops the URI that a literal one would have passed through.
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+# ── shared proxy settings ───────────────────────────────────────────────────────────────────
+# (an include file would be cleaner, but one template keeps the whole edge readable in one place)
+
+# ── :80 — ACME challenge, and nothing else ──────────────────────────────────────────────────
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# Anything arriving on 443 for a name we do not serve — scanners hitting the bare IP, mostly.
+# 444 closes without a response rather than handing back a default vhost.
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
+    server_name _;
+    ssl_certificate     /etc/letsencrypt/live/${RELAY_API_HOST}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${RELAY_API_HOST}/privkey.pem;
+    return 444;
+}
+
+# ── api.<domain> — REST and the WebSocket ───────────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${RELAY_API_HOST};
+
+    ssl_certificate     /etc/letsencrypt/live/${RELAY_API_HOST}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${RELAY_API_HOST}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+
+    limit_conn connzone 64;
+
+    # `/internal/**` is service-to-service and trusts a caller-supplied identity (CLAUDE.md
+    # invariant 10). It is already unreachable by construction — api-gateway declares five
+    # explicit routes and Gateway MVC ships no discovery locator — but that is one config change
+    # away from being untrue, so it is denied here as well.
+    location ^~ /internal/ { return 404; }
+
+    # api-gateway's SecurityConfig permits /actuator/** to anonymous callers, which is correct
+    # for a healthcheck on the bridge and wrong for the public internet.
+    location ^~ /actuator/ { return 404; }
+
+    # The only unauthenticated endpoint group: registration, login, refresh.
+    location ^~ /api/v1/auth/ {
+        limit_req zone=authzone burst=10 nodelay;
+        set $upstream_gateway api-gateway:8080;
+        proxy_pass http://$upstream_gateway$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
+    }
+
+    location ^~ /api/v1/ {
+        limit_req zone=apizone burst=100 nodelay;
+        set $upstream_gateway api-gateway:8080;
+        proxy_pass http://$upstream_gateway$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
+    }
+
+    # websocket-gateway is NOT behind api-gateway — it has no route there and clients connect to
+    # it directly. The token rides the `access_token` subprotocol, so Sec-WebSocket-Protocol has
+    # to survive the hop; it is not a hop-by-hop header, so it passes untouched.
+    location = /ws {
+        set $upstream_ws websocket-gateway:8083;
+        proxy_pass http://$upstream_ws$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        # There is no server-side heartbeat in websocket-gateway and no server-side typing
+        # throttle either — the ping interval is the client's business (PROTOCOL.md §9). The
+        # 60s default here would therefore reap idle-but-healthy sockets, so it is raised to an
+        # hour. Lower it only once the server pings.
+        proxy_read_timeout  3600s;
+        proxy_send_timeout  3600s;
+        proxy_buffering off;
+    }
+
+    location / { return 404; }
+}
+
+# ── auth.<domain> — Keycloak ────────────────────────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${RELAY_AUTH_HOST};
+
+    ssl_certificate     /etc/letsencrypt/live/${RELAY_AUTH_HOST}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${RELAY_AUTH_HOST}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # The admin console is not something a public messenger backend needs to expose. Realm
+    # configuration happens over an SSH tunnel to 8080 on the box.
+    location ^~ /admin/ { return 404; }
+    location = /       { return 404; }
+
+    location / {
+        limit_req zone=authzone burst=20 nodelay;
+        set $upstream_kc keycloak:8080;
+        proxy_pass http://$upstream_kc$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
+        # KC_PROXY_HEADERS=xforwarded makes Keycloak trust these; without them every issued
+        # token and every redirect comes back as http://keycloak:8080.
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port  443;
+    }
+}
+
+# ── sfu.<domain> — LiveKit signaling only ───────────────────────────────────────────────────
+# Media is UDP 7882 / TCP 7881 straight to the container and never passes through here.
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${RELAY_SFU_HOST};
+
+    ssl_certificate     /etc/letsencrypt/live/${RELAY_SFU_HOST}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${RELAY_SFU_HOST}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    location / {
+        set $upstream_lk livekit:7880;
+        proxy_pass http://$upstream_lk$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+}
+
+# ── logs.<domain> — Kibana, source-restricted ───────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${RELAY_KIBANA_HOST};
+
+    ssl_certificate     /etc/letsencrypt/live/${RELAY_KIBANA_HOST}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${RELAY_KIBANA_HOST}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # The index holds every log line the system produces, redacted for credentials but not for
+    # content. Elasticsearch's own auth is on, so this is the second lock rather than the only
+    # one — but it is the one that keeps the login page itself off the public internet.
+    allow ${RELAY_ADMIN_ALLOW_CIDR};
+    deny  all;
+
+    location / {
+        set $upstream_kb kibana:5601;
+        proxy_pass http://$upstream_kb$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 300s;
+    }
+}

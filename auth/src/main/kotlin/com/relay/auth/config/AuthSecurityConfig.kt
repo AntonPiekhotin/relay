@@ -29,6 +29,7 @@ class AuthSecurityConfig {
                 requests
                     .requestMatchers(HttpMethod.POST, "/api/v1/auth/password").authenticated()
                     .requestMatchers("/api/v1/auth/**").permitAll()
+                    .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                     .anyRequest().authenticated()
             }
             .oauth2ResourceServer { oauth2 -> oauth2.jwt { } }

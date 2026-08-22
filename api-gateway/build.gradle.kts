@@ -23,6 +23,7 @@ repositories {
 extra["springCloudVersion"] = "2025.1.2"
 
 dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.springframework.cloud:spring-cloud-starter-gateway-server-webmvc")
     implementation("tools.jackson.module:jackson-module-kotlin")

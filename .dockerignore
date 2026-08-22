@@ -1,0 +1,12 @@
+# The image build context is the repo root, because one shared deploy/Dockerfile builds every
+# service and needs `<service>/build/libs/`. Everything else is excluded — an unfiltered context
+# here is the whole repo including nine Gradle caches and the ELK data.
+#
+# Docker's .dockerignore (unlike .gitignore) honours a `!` re-include even when a parent pattern
+# excluded it, so the allowlist below works.
+*
+
+!*/build/libs/*.jar
+# bootJar produces two artifacts; -plain.jar is the thin one with no dependencies and no
+# Main-Class. Copying both would make the wildcard COPY ambiguous and boot the wrong one.
+*/build/libs/*-plain.jar

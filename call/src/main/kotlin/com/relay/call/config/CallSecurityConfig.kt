@@ -28,6 +28,7 @@ class CallSecurityConfig {
             .authorizeHttpRequests { requests ->
                 requests
                     .requestMatchers("/internal/api/v1/**").permitAll()
+                    .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                     .anyRequest().authenticated()
             }
             .oauth2ResourceServer { oauth2 -> oauth2.jwt { } }

@@ -79,6 +79,20 @@ eureka:
     service-url:
       defaultZone: http://localhost:8761/eureka/
 
+# Health only, and only so the container orchestration has something to probe. There are no
+# metrics and no tracing anywhere in this codebase (ARCHITECTURE.md §9) — exposing `health`
+# alone keeps it that way rather than quietly opening /actuator/env and /actuator/heapdump.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
 logging:
   level:
     com.relay: DEBUG

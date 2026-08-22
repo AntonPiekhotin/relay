@@ -23,7 +23,9 @@ class NotificationSecurityConfig {
             .httpBasic { it.disable() }
             .formLogin { it.disable() }
             .authorizeHttpRequests { requests ->
-                requests.anyRequest().authenticated()
+                requests
+                    .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                    .anyRequest().authenticated()
             }
             .oauth2ResourceServer { oauth2 -> oauth2.jwt { } }
             .build()
