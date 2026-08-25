@@ -51,7 +51,7 @@ for h in $HOSTS; do
   # The throwaway has to be deleted first, or certbot sees a valid-looking cert and declines.
   $COMPOSE run --rm --entrypoint sh certbot -c "rm -rf /etc/letsencrypt/live/$h /etc/letsencrypt/archive/$h /etc/letsencrypt/renewal/$h.conf"
   # coturn reads its certificate from this same volume; TURN_HOST gets one for `turns:` on 5349.
-  $COMPOSE run --rm certbot certonly --webroot -w /var/www/certbot \
+  $COMPOSE run --rm --entrypoint certbot certbot certonly --webroot -w /var/www/certbot \
     $STAGING_ARG \
     --email "$LETSENCRYPT_EMAIL" --agree-tos --no-eff-email \
     --non-interactive \
