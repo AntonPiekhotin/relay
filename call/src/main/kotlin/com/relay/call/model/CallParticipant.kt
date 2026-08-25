@@ -15,18 +15,10 @@ data class CallParticipantId(
 ) : Serializable {
 
     companion object {
-        /** Only ever used by the no-arg constructor JPA requires of an id class. */
         private val ZERO: UUID = UUID(0L, 0L)
     }
 }
 
-/**
- * Membership, as its own table rather than caller/callee columns on [Call], so a group call is a
- * third row instead of a migration.
- *
- * [joinedAt] is when this participant's media session began — creation time for the caller, answer
- * time for the callee — and stays null for a callee who never answered.
- */
 @Entity
 @Table(name = "call_participants")
 @IdClass(CallParticipantId::class)
@@ -46,7 +38,6 @@ class CallParticipant(
     @Column(name = "left_at")
     var leftAt: Instant? = null,
 
-    /** This participant's own position — see [ParticipantState]. Group calls branch on it. */
     @Column(name = "state", nullable = false, length = 16)
     var state: ParticipantState = ParticipantState.INVITED
 )

@@ -1,34 +1,11 @@
 package com.relay.common.event
 
-/**
- * Topic names, separated by traffic class and keyed by dialogId so a conversation's messages
- * stay ordered within one partition. See `docs/KAFKA.md`.
- */
 object KafkaTopics {
 
-    /**
-     * Partition count for every topic here, and therefore the ceiling on listener concurrency —
-     * a consumer group can never have more members processing than there are partitions.
-     *
-     * It lives in one place because the count has to agree across services: topics are created
-     * by whichever service produces to them, and a mismatch would mean whoever starts first
-     * silently decides the layout. Changing it after messages exist re-shuffles which partition
-     * a dialogId hashes to, which breaks per-conversation ordering across the change.
-     */
     const val PARTITIONS = 3
 
-    /** Client sends awaiting persistence. websocket-gateway → message-service. */
     const val MESSAGES_INCOMING = "messages.incoming"
 
-    /**
-     * Read cursors moving forward. websocket-gateway → message-service, keyed by dialogId so a
-     * conversation's reads stay ordered against each other.
-     *
-     * Its own topic rather than a second shape on [MESSAGES_INCOMING]: a read is a different
-     * traffic class from a send, and a backlog of reads must not add lag to message persistence
-     * (`docs/KAFKA.md` §2.1). The receipt going back out does *not* get its own topic — see
-     * [MESSAGES_DELIVERY].
-     */
     const val MESSAGES_READ = "messages.read"
 
     /**

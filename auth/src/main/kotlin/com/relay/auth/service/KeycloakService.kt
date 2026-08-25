@@ -44,7 +44,6 @@ class KeycloakService(
     private val tokenUrl = "${props.url}/realms/${props.realm}/protocol/openid-connect/token"
     private val logoutUrl = "${props.url}/realms/${props.realm}/protocol/openid-connect/logout"
 
-    /** Creates the user and assigns its client role, returning the new Keycloak user id. */
     fun registerUser(request: RegisterRequest): String = with(request) {
         val user = UserRepresentation().apply {
             username = request.email
@@ -81,11 +80,6 @@ class KeycloakService(
         )
     }
 
-    /**
-     * Keycloak reports failures as a JSON body with an `errorMessage`, but not always — a policy
-     * rejection, a proxy error page or an empty body all end up here too, so neither the read nor
-     * the parse may be allowed to mask the real status with a 500.
-     */
     private fun processError(response: Response, action: String): Nothing {
         val errorBody = runCatching { response.readEntity(String::class.java) }.getOrNull().orEmpty()
         throw RelayException(response.status, "Failed to $action: ${errorMessageIn(errorBody)}")
@@ -180,21 +174,9 @@ class KeycloakService(
             pairs.forEach { (name, value) -> add(name, value) }
         }
 
-    /**
-     * Overwrites the credential through the admin API. Blocking, like every admin-client call —
-     * which is now simply a blocking call on a virtual thread rather than something that has to be
-     * pushed onto a separate scheduler.
-     *
-     * Keycloak enforces its own realm password policy here (length, history, reuse), which is why a
-     * [WebApplicationException] is unpacked into the status and message it carries instead of
-     * becoming a 500 — the client needs to be told *why* the new password was refused.
-     */
     fun resetPassword(userId: String, newPassword: String) {
         try {
-            keycloak.realm(props.realm)
-                .users()
-                .get(userId)
-                .resetPassword(UserCredentials.createPasswordCredentials(newPassword))
+            updateUserPassword(userId, newPassword)
         } catch (ex: WebApplicationException) {
             processError(ex.response, "change password")
         } catch (ex: Exception) {
@@ -205,6 +187,13 @@ class KeycloakService(
             )
         }
         logger.debug("Reset password for user {}", userId)
+    }
+
+    private fun updateUserPassword(userId: String, newPassword: String) {
+        keycloak.realm(props.realm)
+            .users()
+            .get(userId)
+            .resetPassword(UserCredentials.createPasswordCredentials(newPassword))
     }
 
     fun deleteUser(userId: String) {

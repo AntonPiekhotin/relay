@@ -32,12 +32,6 @@ class MessageExceptionHandler {
             )
         )
 
-    /**
-     * Two sends racing on the same clientMessageId. The pre-check in MessageService covers the
-     * ordinary retry; this is the constraint catching the concurrent case, and it cannot be
-     * recovered into "return the existing message" here because the persistence context is
-     * already invalid. A 409 tells the caller the message is stored and to re-read it.
-     */
     @ExceptionHandler(DataIntegrityViolationException::class)
     fun handleDuplicate(e: DataIntegrityViolationException): ResponseEntity<ResponseErrorDto> =
         ResponseEntity.status(HttpStatus.CONFLICT).body(

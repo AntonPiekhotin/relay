@@ -29,18 +29,6 @@ class AuthService(
     fun logout(request: RefreshRequest) =
         keycloakService.logout(request.refreshToken)
 
-    /**
-     * Password changes live here rather than in user-service because Keycloak owns the credential —
-     * user-db has no password column to update.
-     *
-     * The current password is re-verified with a password grant, the only way to check a credential
-     * through Keycloak's API, before the admin client overwrites it. Holding a valid access token is
-     * not sufficient on its own: a leaked token would otherwise be enough to lock the owner out.
-     *
-     * Existing sessions are deliberately left alone, so the caller is not signed out of the device
-     * they just used. Revoking every other session on a password change is the natural follow-up
-     * and needs a per-session view we do not keep yet.
-     */
     fun changePassword(userId: String, username: String, request: ChangePasswordRequest) {
         if (request.newPassword == request.currentPassword) {
             throw RelayException(
@@ -57,11 +45,6 @@ class AuthService(
         logger.info("Password changed for user {}", userId)
     }
 
-    /**
-     * A failed verification is reported as a plain 401 instead of Keycloak's `invalid_grant` body:
-     * the caller does not need the token endpoint's internals, and the raw body would be echoed
-     * straight back to a client.
-     */
     private fun currentPasswordRejected(cause: Throwable): Throwable =
         if (cause is RelayException && cause.statusCode == HttpStatus.UNAUTHORIZED.value()) {
             RelayException(HttpStatus.UNAUTHORIZED.value(), "Current password is incorrect", cause)
@@ -69,11 +52,6 @@ class AuthService(
             cause
         }
 
-    /**
-     * Creates the identity in Keycloak and then persists the profile in user-service.
-     * If the profile cannot be saved the Keycloak user is deleted again, so registration
-     * never leaves behind an identity that has no profile.
-     */
     fun register(request: RegisterRequest) {
         val userId = keycloakService.registerUser(request)
         try {
@@ -100,7 +78,6 @@ class AuthService(
         throw registrationFailure(cause)
     }
 
-    /** Keeps the status reported by user-service (e.g. 409 on a duplicate profile) when there is one. */
     private fun registrationFailure(cause: Throwable): Throwable =
         cause as? RelayException
             ?: RelayException(

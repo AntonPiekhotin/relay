@@ -38,8 +38,6 @@ class UserServiceClient(
                 }
                 .toBodilessEntity()
         } catch (ex: ResourceAccessException) {
-            // Only a timeout becomes a 504. A refused connection is a different failure and still
-            // falls through to the generic handler, exactly as it did on the reactive client.
             if (ex.cause is HttpTimeoutException || ex.cause is SocketTimeoutException) {
                 throw RelayException(
                     HttpStatus.GATEWAY_TIMEOUT.value(),

@@ -19,20 +19,6 @@ import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
 import tools.jackson.databind.json.JsonMapper
 
-/**
- * The two things a client does over the socket that this service owns.
- *
- * **Sends** (`messages.incoming`) persist through the same [MessageService] the REST fallback uses
- * and answer with an Accepted/Rejected event on `messages.delivery`. Every outcome — success,
- * duplicate, rejection — produces one. A send that produced no event would leave the client's
- * message stuck in "sending" until its timeout.
- *
- * **Reads** (`messages.read`) move a cursor and answer with a receipt, or with nothing at all. The
- * asymmetry with sends is deliberate and explained on [onMarkReadCommand].
- *
- * Shared consumer group: message-service instances compete for partitions, which is correct
- * here (each command must be processed once) — unlike the gateway's broadcast groups.
- */
 @Component
 class KafkaEventConsumer(
     private val messageService: MessageService,

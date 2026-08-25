@@ -6,15 +6,7 @@ import org.slf4j.MDC
  * Helpers for carrying the correlation context across a thread boundary.
  *
  * SLF4J's [MDC] is backed by a plain `ThreadLocal` and is **not** inheritable, so every hop onto
- * another thread starts with an empty MDC. On this codebase that means these seams specifically:
- *
- *  - `Thread.ofVirtual().start { ... }` — the gateway's per-socket outbound writer
- *  - a `whenComplete` callback on a `KafkaTemplate.send()` future, which runs on Kafka's producer
- *    I/O thread, not on the thread that called `send`
- *  - a `@Scheduled` tick, which has no ambient request at all
- *
- * The HTTP request path needs none of this: Tomcat on virtual threads uses one unpooled virtual
- * thread per request, so there is nothing to inherit from and nothing to leak into.
+ * another thread starts with an empty MDC.
  */
 object RequestIdContext {
 
@@ -35,8 +27,6 @@ object RequestIdContext {
             put(RequestId.MDC_SESSION_ID, sessionId)
             return body()
         } finally {
-            // Restoring the whole map rather than removing individual keys: `body` may have added
-            // keys of its own, and this leaves the thread exactly as it was found.
             if (previous == null) MDC.clear() else MDC.setContextMap(previous)
         }
     }

@@ -11,7 +11,6 @@ import org.springframework.security.web.SecurityFilterChain
 @Configuration
 @EnableWebSecurity
 class MessageSecurityConfig {
-
     /**
      * Two audiences, two rules:
      *
@@ -37,7 +36,6 @@ class MessageSecurityConfig {
             }
             .oauth2ResourceServer { oauth2 -> oauth2.jwt { } }
             .build()
-
     /** Keeps Boot from auto-generating a default user with a random password. */
     @Bean
     fun noUserDetails(): UserDetailsService = InMemoryUserDetailsManager()

@@ -37,13 +37,6 @@ class ApiGatewayConfig {
     fun notificationRoute(): RouterFunction<ServerResponse> =
         forward("notification", "/api/v1/notification/**")
 
-    /**
-     * One route per service, each declared as its own [RouterFunction] bean — the MVC flavour of
-     * the gateway composes routes from beans rather than from a single `RouteLocator`.
-     *
-     * [lb] resolves `serviceId` through Eureka and puts the chosen instance's URI on the request,
-     * which is what the argument-less [http] handler then proxies to.
-     */
     private fun forward(serviceId: String, pathPattern: String): RouterFunction<ServerResponse> =
         route(serviceId)
             .route(RequestPredicates.path(pathPattern), http())
@@ -52,17 +45,7 @@ class ApiGatewayConfig {
             .build()
 
     /**
-     * Copies this request's correlation id onto the proxied request, so the downstream service's
-     * own `RequestIdFilter` adopts it rather than minting a second one and breaking the chain.
-     *
-     * `RequestIdFilter` from `common` has already established the id in the MDC by the time a route
-     * runs; this only has to forward it. Applied inside [forward], so all five routes get it from
-     * one place.
-     *
-     * A `HandlerFilterFunction` rather than `BeforeFilterFunctions.addRequestHeader`, because that
-     * helper only expands URI variables and cannot take a value computed per request. Gateway MVC
-     * proxies from the [ServerRequest], so the header has to be added there rather than on the
-     * `HttpServletRequest`.
+     * Copies this request's correlation id onto the proxied request
      */
     private fun propagateRequestId(): HandlerFilterFunction<ServerResponse, ServerResponse> =
         HandlerFilterFunction { request, next ->

@@ -11,16 +11,6 @@ import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 
-/**
- * Statuses map one-to-one onto the error codes the gateway turns these into, so the code a client
- * finally sees is decided here:
- *
- * | 400 | INVALID_REQUEST     |
- * | 403 | NOT_A_PARTICIPANT   |
- * | 404 | CALL_NOT_FOUND      |
- * | 409 | USER_BUSY           |
- * | 422 | INVALID_CALL_STATE  |
- */
 @RestControllerAdvice
 class CallExceptionHandler {
 
@@ -43,10 +33,6 @@ class CallExceptionHandler {
             )
         )
 
-    /**
-     * Two devices settling the same call at once. The loser's version check failed, which means the
-     * call is no longer in the state it acted on — the same answer as acting on it too late.
-     */
     @ExceptionHandler(OptimisticLockingFailureException::class)
     fun handleConcurrentTransition(e: OptimisticLockingFailureException): ResponseEntity<ResponseErrorDto> =
         ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
@@ -56,11 +42,6 @@ class CallExceptionHandler {
             )
         )
 
-    /**
-     * A constraint reached the controller without the service turning it into something better.
-     * In practice that is the `active_calls` key, i.e. somebody is busy — the service normally
-     * catches that one and says so precisely.
-     */
     @ExceptionHandler(DataIntegrityViolationException::class)
     fun handleConflict(e: DataIntegrityViolationException): ResponseEntity<ResponseErrorDto> =
         ResponseEntity.status(HttpStatus.CONFLICT).body(

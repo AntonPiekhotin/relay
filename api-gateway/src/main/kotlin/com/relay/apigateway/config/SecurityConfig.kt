@@ -1,6 +1,5 @@
 package com.relay.apigateway.config
 
-
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
@@ -11,10 +10,6 @@ import org.springframework.security.web.SecurityFilterChain
 @EnableWebSecurity
 class SecurityConfig {
 
-    /**
-     * Not named `springSecurityFilterChain`: on the servlet stack that name is already taken by the
-     * `FilterChainProxy` that `WebSecurityConfiguration` registers, and reusing it fails the context.
-     */
     @Bean
     fun gatewaySecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
         return http

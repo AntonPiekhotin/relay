@@ -154,16 +154,6 @@ class DialogQueryService(
         )
     }
 
-    /**
-     * The authorization check every dialog read shares.
-     *
-     * A caller who is not a participant gets **404, not 403** — the opposite of the send path, which
-     * answers `NOT_A_PARTICIPANT`. The difference is what the two leak. Sending needs a dialog id the
-     * client already believes it has, so telling it "that one is not yours" is useful. Reading is
-     * enumerable: a 403 here would confirm that a guessed dialog id exists, turning these endpoints
-     * into an oracle for which conversations are real. To a caller with no business in a dialog, it
-     * does not exist.
-     */
     @Transactional(readOnly = true)
     fun requireParticipant(callerId: String, rawDialogId: String): Dialog =
         requireParticipant(callerId, rawDialogId.toUuidOrBadRequest("dialogId"))

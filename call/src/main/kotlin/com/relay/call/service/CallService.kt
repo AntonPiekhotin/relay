@@ -133,7 +133,6 @@ class CallService(
         return call.toResponse(participants)
     }
 
-    /** The callee declines. Distinct from a hangup: the call was never answered and was refused. */
     @Transactional
     fun reject(rawCallId: String, request: RejectCallRequest): CallResponse {
         val call = requireCall(rawCallId)
@@ -158,7 +157,6 @@ class CallService(
         return call.toResponse(participants)
     }
 
-    /** Either party ends the call, answered or not. */
     @Transactional
     fun hangup(rawCallId: String, request: HangupCallRequest): CallResponse {
         val call = requireCall(rawCallId)

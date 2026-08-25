@@ -19,22 +19,12 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
-/**
- * Group calls, client-facing and REST-driven — the one call surface that is not frames, because
- * create and join must return an SFU room token synchronously, and there is no SDP for a socket to
- * relay. The api-gateway's existing `/api/v1/call` prefix route covers this path; nothing was
- * added there.
- *
- * The caller is always the JWT subject. `sessionId` in the bodies is only ever used to exclude the
- * acting device from its own `cancel` — never as identity.
- */
 @RestController
 @RequestMapping(path = ["/api/v1/call/group-calls"])
 class GroupCallController(
     private val groupCallService: GroupCallService
 ) {
 
-    /** Creates and rings. 201 on first creation; a retry of the same `callId` is answered 200. */
     @PostMapping
     fun create(
         @AuthenticationPrincipal jwt: Jwt,
@@ -46,7 +36,6 @@ class GroupCallController(
             .body(result.response)
     }
 
-    /** Enters the call and returns the room token. Also the token-refresh path when already in. */
     @PostMapping("/{callId}/join")
     fun join(
         @AuthenticationPrincipal jwt: Jwt,
@@ -55,7 +44,6 @@ class GroupCallController(
     ): ResponseEntity<GroupCallResponse> =
         ResponseEntity.ok(groupCallService.join(jwt.callerId(), callId, request?.sessionId))
 
-    /** Refuses while ringing. */
     @PostMapping("/{callId}/decline")
     fun decline(
         @AuthenticationPrincipal jwt: Jwt,
@@ -64,7 +52,6 @@ class GroupCallController(
     ): ResponseEntity<GroupCallResponse> =
         ResponseEntity.ok(groupCallService.decline(jwt.callerId(), callId, request?.reason, request?.sessionId))
 
-    /** Steps out. Idempotent — the SFU webhook may already have done it. */
     @PostMapping("/{callId}/leave")
     fun leave(
         @AuthenticationPrincipal jwt: Jwt,
@@ -73,7 +60,6 @@ class GroupCallController(
     ): ResponseEntity<GroupCallResponse> =
         ResponseEntity.ok(groupCallService.leave(jwt.callerId(), callId, request?.sessionId))
 
-    /** Current state and roster. Never mints a token — join is what admits to the room. */
     @GetMapping("/{callId}")
     fun describe(
         @AuthenticationPrincipal jwt: Jwt,
@@ -81,7 +67,6 @@ class GroupCallController(
     ): ResponseEntity<GroupCallResponse> =
         ResponseEntity.ok(groupCallService.describe(jwt.callerId(), callId))
 
-    /** Without a `sub` there is no user to act for — refuse rather than guess. */
     private fun Jwt.callerId(): String =
         subject ?: throw RelayException(HttpStatus.UNAUTHORIZED.value(), "Token carries no subject")
 }

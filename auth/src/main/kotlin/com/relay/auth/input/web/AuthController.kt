@@ -43,11 +43,6 @@ class AuthController(
         authService.logout(request)
     }
 
-    /**
-     * The one authenticated endpoint on this controller: who you are comes from the token, so the
-     * body only carries the two passwords. 204 rather than a token pair — the caller's existing
-     * tokens stay valid, so there is nothing to hand back.
-     */
     @PostMapping("/password")
     fun changePassword(
         @AuthenticationPrincipal jwt: Jwt,

@@ -12,15 +12,6 @@ import io.livekit.server.RoomName
 import java.time.Instant
 import org.springframework.stereotype.Component
 
-/**
- * Mints LiveKit room tokens. Offline: this signs a JWT with the shared API secret and never opens
- * a connection, so it is safe inside a request and needs no LiveKit server to be running — the
- * token is only *checked* when the client presents it to the SFU.
- *
- * The TTL is short on purpose. It bounds how long a leaked token admits someone, not how long they
- * may stay: LiveKit checks it at connection time only, and a client that needs to reconnect later
- * re-joins over REST and gets a fresh one.
- */
 @Component
 class LivekitTokenFactory(
     private val properties: CallProperties

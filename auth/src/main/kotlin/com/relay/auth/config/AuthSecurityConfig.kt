@@ -13,12 +13,6 @@ import org.springframework.security.web.SecurityFilterChain
 @EnableWebSecurity
 class AuthSecurityConfig {
 
-    /**
-     * Register, login, refresh and logout are open by necessity — they are how a caller gets a token
-     * in the first place. Changing a password is not: it acts on an existing account, so it is
-     * matched *before* the open rule (the first matching rule wins) and requires a validated JWT,
-     * which is also where the endpoint learns whose password to change.
-     */
     @Bean
     fun chain(http: HttpSecurity): SecurityFilterChain =
         http
@@ -35,8 +29,6 @@ class AuthSecurityConfig {
             .oauth2ResourceServer { oauth2 -> oauth2.jwt { } }
             .build()
 
-    /** Empty on purpose: this service authenticates by JWT only, and without a bean here Boot
-     *  would auto-configure a default user with a generated password. */
     @Bean
     fun noUserDetails(): UserDetailsService = InMemoryUserDetailsManager()
 }

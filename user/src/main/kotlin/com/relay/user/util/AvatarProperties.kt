@@ -4,14 +4,6 @@ import com.relay.user.model.AVATAR_COLUMN_BYTES
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.util.unit.DataSize
 
-/**
- * [maxSize] must stay at or below the declared width of the `bytes` column, and below
- * `spring.servlet.multipart.max-file-size`; the [require] turns a misconfiguration into a startup
- * failure instead of a truncated write or a confusing 500 on the first upload.
- *
- * [allowedContentTypes] is matched against the type detected from the file's own bytes, never
- * against the `Content-Type` the client declared.
- */
 @ConfigurationProperties(prefix = "relay.user.avatar")
 data class AvatarProperties(
     val maxSize: DataSize = DataSize.ofMegabytes(1),

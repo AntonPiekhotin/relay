@@ -3,8 +3,11 @@ package com.relay.common.observability
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import org.slf4j.MDC
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.web.filter.OncePerRequestFilter
+
+private const val ANONYMOUS = "anonymousUser"
 
 /**
  * Adds the authenticated user to the MDC, so a log record says *who* as well as *which request*.
@@ -32,7 +35,7 @@ class PrincipalMdcFilter : OncePerRequestFilter() {
     ) {
         var applied = false
         try {
-            val authentication = SecurityContextHolder.getContext()?.authentication
+            val authentication = SecurityContextHolder.getContext().authentication
             val name = authentication?.name
             if (authentication != null &&
                 authentication.isAuthenticated &&
@@ -50,11 +53,8 @@ class PrincipalMdcFilter : OncePerRequestFilter() {
             filterChain.doFilter(request, response)
         } finally {
             // Only this key: RequestIdFilter owns the request id and clears it in its own finally.
-            if (applied) org.slf4j.MDC.remove(RequestId.MDC_USER_ID)
+            if (applied) MDC.remove(RequestId.MDC_USER_ID)
         }
     }
 
-    private companion object {
-        const val ANONYMOUS = "anonymousUser"
-    }
 }

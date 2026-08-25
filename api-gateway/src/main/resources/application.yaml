@@ -17,14 +17,6 @@ spring:
     loadbalancer:
       cache:
         ttl: 5s
-    # Gateway MVC config would live under spring.cloud.gateway.server.webmvc.* — the legacy
-    # spring.cloud.gateway.* namespace is silently ignored rather than rejected, so a misplaced
-    # key routes nothing. Nothing needs setting here today.
-    #
-    # In particular there is no `discovery.locator.enabled: false` any more: unlike the WebFlux
-    # flavour, Gateway MVC ships no discovery route locator at all, so no service ever gets an
-    # automatic /{serviceId}/** route. The routes are exactly the five declared in
-    # ApiGatewayConfig, which keeps /internal paths unreachable from outside by construction.
 
 eureka:
   client:
@@ -32,9 +24,6 @@ eureka:
     service-url:
       defaultZone: http://localhost:8761/eureka/
 
-# Health only, and only so the container orchestration has something to probe. There are no
-# metrics and no tracing anywhere in this codebase (ARCHITECTURE.md §9) — exposing `health`
-# alone keeps it that way rather than quietly opening /actuator/env and /actuator/heapdump.
 management:
   endpoints:
     web:
@@ -50,37 +39,24 @@ logging:
   level:
     com.relay: DEBUG
     root: INFO
-    # Downgraded from DEBUG when logs became centralized: both log authentication decisions and
-    # request detail on every proxied call, which is a lot of indexed noise and an easy way to
-    # leak header contents. Turn either back on for one run with -Dlogging.level.<name>=DEBUG.
     org.springframework.security: INFO
     web: INFO
-  # The console keeps Boot's human pattern on purpose: scripts/start-all.sh greps stdout for
-  # ': Started …Kt in N seconds' to decide this service is up. Structured output goes to the
-  # file appender only.
   threshold:
-    console: DEBUG   # local tail keeps the detail
-    file: INFO       # only INFO+ reaches Elasticsearch
+    console: DEBUG
+    file: INFO
   pattern:
-    correlation: "[%X{requestId:-}] "   # Boot already registers the %correlationId rule
+    correlation: "[%X{requestId:-}] "
   file:
-    # scripts/start-all.sh exports RELAY_LOG_DIR as an absolute path, so it is authoritative there.
-    # The bare default is relative to the JVM's cwd and assumes the repo root, which is what IDE
-    # run configurations use. Do not make it `../logs`: start-all.sh runs each JVM from its own
-    # service directory, but an IDE run would then write a level *above* the repo, outside the
-    # directory filebeat bind-mounts — logs land on disk and never reach Kibana.
     name: ${RELAY_LOG_DIR:logs}/json/api-gateway.json
   logback:
     rollingpolicy:
-      # total-size-cap defaults to 0B == unlimited, which is how one log file reached 445 MB.
-      # This bounds any future storm regardless of its cause.
       max-file-size: 20MB
       max-history: 3
       total-size-cap: 200MB
       clean-history-on-start: true
   structured:
     format:
-      file: ecs      # console deliberately left unset — see the threshold comment above
+      file: ecs
     json:
       stacktrace:
         max-length: 8192

@@ -10,18 +10,6 @@ import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
-/**
- * One call. Mutable, unlike `Message` — a call is a state machine that outlives its own creation,
- * where a message is written once and never changes.
- *
- * [id] arrives from the client (see the baseline migration for why), so it is never generated here.
- *
- * [version] is what makes two of a callee's devices answering at the same instant resolve to one
- * winner: the loser's commit fails on the version check instead of quietly overwriting the answer
- * that already went out. It is nullable so that Spring Data reads an unsaved call as new and
- * `persist()`s it — with a non-null version it would `merge()` instead, and a merge turns a
- * colliding call id into an update of somebody else's call rather than a primary-key violation.
- */
 @Entity
 @Table(
     name = "calls",
@@ -74,10 +62,6 @@ class Call(
     var version: Long? = null
 ) {
 
-    /**
-     * Moves the call to a terminal state. [durationSeconds] is filled only when the call was
-     * answered, so a 40-second ring followed by a timeout does not read as a 40-second call.
-     */
     fun terminate(status: CallStatus, reason: String, at: Instant = Instant.now()) {
         require(status.isTerminal) { "$status is not a terminal status" }
         this.status = status

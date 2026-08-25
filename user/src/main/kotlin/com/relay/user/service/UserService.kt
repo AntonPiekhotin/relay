@@ -56,23 +56,12 @@ class UserService(
     @Transactional(readOnly = true)
     fun getById(id: String): UserResponse = requireUser(id).toResponse()
 
-    /** The caller's own profile, including fields nobody else is shown. */
     @Transactional(readOnly = true)
     fun getProfile(id: String): ProfileResponse = requireUser(id).toProfile()
 
-    /** Somebody else's profile: the public subset, so a lookup by id cannot mine private fields. */
     @Transactional(readOnly = true)
     fun getSummary(id: String): UserSummaryResponse = requireUser(id).toSummary()
 
-    /**
-     * Replaces the editable projection of the profile — both names, every time. A client that sends
-     * back a stale value therefore overwrites a change another of its devices made in between; the
-     * window is two fields wide and accepted as the price of an unambiguous `PUT`.
-     *
-     * Blank names are refused by `@NotBlank` on the request, not here. Trimming stays, because Bean
-     * Validation rejects values without transforming them: `@NotBlank` refuses `"   "` but lets
-     * `" Alicia "` through, and a stored leading space quietly reorders the alphabetical contact list.
-     */
     @Transactional
     fun updateProfile(id: String, request: UpdateProfileRequest): ProfileResponse {
         val user = requireUser(id)
@@ -83,11 +72,6 @@ class UserService(
         return user.toProfile()
     }
 
-    /**
-     * Finding people to start a dialog with. The caller is excluded — you cannot add yourself — and
-     * every hit carries whether they are already in the caller's contacts, so the client can render
-     * "Add" or "Added" without a second round trip per row.
-     */
     @Transactional(readOnly = true)
     fun search(selfId: String, query: String, page: Int, size: Int): PagedResponse<UserSearchResultResponse> {
         val term = query.trim()
@@ -102,13 +86,11 @@ class UserService(
         return PagedResponse.of(found) { UserSearchResultResponse(it.toSummary(), it.id in contactIds) }
     }
 
-    /** Guarded against an empty list: a derived `in ()` query is a syntax error on most databases. */
     private fun contactUserIdsAmong(ownerId: String, userIds: List<String>): Set<String> =
         if (userIds.isEmpty()) emptySet()
         else contactRepository.findAllByOwnerIdAndContactUserIdIn(ownerId, userIds)
             .mapTo(mutableSetOf()) { it.contactUserId }
 
-    /** Managed inside the caller's transaction, so mutations to it are persisted by dirty checking. */
     private fun requireUser(id: String): User =
         userRepository.findById(id)
             .orElseThrow { RelayException(HttpStatus.NOT_FOUND.value(), "User $id not found") }

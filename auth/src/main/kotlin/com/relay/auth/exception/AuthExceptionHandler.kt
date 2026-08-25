@@ -24,11 +24,6 @@ class AuthExceptionHandler {
             )
         )
 
-    /**
-     * MVC reports a `@Valid` failure as [MethodArgumentNotValidException]. Without this it reaches
-     * the catch-all below and a rejected password comes back as a 500 with no hint of which rule
-     * failed.
-     */
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun handleValidationException(e: MethodArgumentNotValidException): ResponseEntity<ResponseErrorDto> =
         ResponseEntity.status(HttpStatus.BAD_REQUEST).body(

@@ -16,7 +16,6 @@ import org.springframework.stereotype.Repository
 @Repository
 interface CallRepository : JpaRepository<Call, UUID> {
 
-    /** The ring-timeout sweepers' query, split by kind — the two kinds expire differently. */
     fun findAllByKindAndStatusAndStartedAtBefore(
         kind: CallKind,
         status: CallStatus,
@@ -37,10 +36,6 @@ interface CallRepository : JpaRepository<Call, UUID> {
     @Query("select c from Call c where c.id = :id")
     fun findWithLockById(@Param("id") id: UUID): Call?
 
-    /**
-     * Answered group calls that still have somebody ringing past the timeout. The per-invitee half
-     * of the ring sweep: the call goes on, but each unanswered invitee individually rings out.
-     */
     @Query(
         """
         select distinct c.id from Call c

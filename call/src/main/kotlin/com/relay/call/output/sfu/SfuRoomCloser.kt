@@ -7,14 +7,6 @@ import org.springframework.stereotype.Component
 import org.springframework.transaction.event.TransactionPhase
 import org.springframework.transaction.event.TransactionalEventListener
 
-/**
- * Closes the SFU room after a group call's terminal transition has committed. AFTER_COMMIT for the
- * same reason the Kafka producer is: a network call must never ride inside the transaction, and a
- * rolled-back termination must not kick a room that is still live.
- *
- * Best-effort by design — a failure here is logged and forgotten, because LiveKit's own empty-room
- * timeout disconnects stragglers anyway.
- */
 @Component
 class SfuRoomCloser(
     private val roomDirectory: RoomDirectory
