@@ -104,7 +104,38 @@ else
   systemctl enable --now docker
   ok "installed: $(docker --version)"
 fi
-docker compose version >/dev/null 2>&1 || die "docker compose plugin missing"
+
+# Compose v2 is a separate CLI plugin, and this is checked independently on purpose: Ubuntu's own
+# `docker.io` package ships the engine WITHOUT it, so a box that already has docker very often has
+# no `docker compose` at all. Treating "docker exists" as "compose exists" is how this script used
+# to fail on a working machine.
+step "docker compose"
+if docker compose version >/dev/null 2>&1; then
+  ok "plugin present: $(docker compose version --short)"
+else
+  # The package, if Docker's own apt/dnf repo is configured on this box...
+  if [ "$PKG" = apt ]; then
+    apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1 || true
+  else
+    dnf install -y -q docker-compose-plugin >/dev/null 2>&1 || true
+  fi
+
+  # ...and the static binary otherwise. This is the fallback that always works: it needs no repo,
+  # which matters on a release Docker has stopped publishing for (Ubuntu 20.04 is past its
+  # standard support window and is one of those).
+  if ! docker compose version >/dev/null 2>&1; then
+    command -v curl >/dev/null 2>&1 || { [ "$PKG" = apt ] && apt-get install -y -qq curl; }
+    CLI_PLUGINS=/usr/local/lib/docker/cli-plugins
+    mkdir -p "$CLI_PLUGINS"
+    # Release assets are named for `uname -m` exactly: aarch64 / x86_64.
+    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$ARCH" \
+      -o "$CLI_PLUGINS/docker-compose" || die "could not download the compose plugin"
+    chmod +x "$CLI_PLUGINS/docker-compose"
+  fi
+
+  docker compose version >/dev/null 2>&1 || die "compose plugin still missing after both attempts"
+  ok "plugin installed: $(docker compose version --short)"
+fi
 
 # Let the deploy user drive docker without sudo — the GitHub Actions deploy job runs
 # `docker compose` over a non-interactive ssh session, where sudo would prompt.
