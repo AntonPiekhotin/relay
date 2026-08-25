@@ -533,10 +533,17 @@ services:
     # default.conf ships in the image and also claims `default_server` on 80 — two of those is a
     # startup failure, so it goes first. The reload loop picks up a renewed certificate without a
     # restart; certbot writes into the shared letsencrypt volume.
+    # `exec /docker-entrypoint.sh nginx ...` rather than `exec nginx ...`, and that is
+    # load-bearing. The image's entrypoint runs /docker-entrypoint.d/ — which is where
+    # 20-envsubst-on-templates.sh renders conf.d/*.template into conf.d/*.conf — ONLY when its
+    # first argument is literally `nginx`. Overriding `command:` with `/bin/sh -c ...` makes $1
+    # `/bin/sh`, so the templating silently never runs; combined with the `rm` below that leaves
+    # nginx with zero server blocks, listening on nothing and resetting every connection while
+    # the container still reports healthy. Calling the entrypoint explicitly restores it.
     command: >
       /bin/sh -c "rm -f /etc/nginx/conf.d/default.conf;
                   while :; do sleep 6h & wait $${!}; nginx -s reload; done &
-                  exec nginx -g 'daemon off;'"
+                  exec /docker-entrypoint.sh nginx -g 'daemon off;'"
     depends_on:
       api-gateway: { condition: service_started }
       websocket-gateway: { condition: service_started }

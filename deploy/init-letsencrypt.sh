@@ -51,7 +51,11 @@ for h in $HOSTS; do
   # The throwaway has to be deleted first, or certbot sees a valid-looking cert and declines.
   $COMPOSE run --rm --entrypoint sh certbot -c "rm -rf /etc/letsencrypt/live/$h /etc/letsencrypt/archive/$h /etc/letsencrypt/renewal/$h.conf"
   # coturn reads its certificate from this same volume; TURN_HOST gets one for `turns:` on 5349.
-  $COMPOSE run --rm certbot certonly --webroot -w /var/www/certbot \
+  # --entrypoint certbot is NOT optional. The certbot service defines an entrypoint — the 12h
+  # renewal loop — and `compose run` overrides only the COMMAND. Without this, `certonly ...`
+  # arrives as positional arguments to `sh -c`, which ignores them, and the container sits in
+  # the renewal loop until someone kills it. It looks exactly like a hung ACME challenge.
+  $COMPOSE run --rm --entrypoint certbot certbot certonly --webroot -w /var/www/certbot \
     $STAGING_ARG \
     --email "$LETSENCRYPT_EMAIL" --agree-tos --no-eff-email \
     --non-interactive \
