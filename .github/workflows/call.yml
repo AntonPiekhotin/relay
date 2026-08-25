@@ -1,0 +1,22 @@
+name: Call CI/CD
+
+on:
+  push:
+    paths:
+      - 'call/**'
+      - 'common/**'
+      - 'deploy/Dockerfile'
+      - '.github/workflows/call.yml'
+      - '.github/workflows/service.yml'
+
+jobs:
+  ci:
+    # Granted on the CALLING job — a reusable workflow's own `permissions:`
+    # cannot exceed what its caller was given, and pushing to GHCR needs write.
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/service.yml
+    with:
+      service: call
+    secrets: inherit

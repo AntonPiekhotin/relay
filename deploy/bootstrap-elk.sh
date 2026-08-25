@@ -54,4 +54,6 @@ KIBANA_EXEC="$COMPOSE exec -T elasticsearch" \
   "$ROOT/elk/setup.sh"
 
 echo
-echo "Done. Kibana: https://${KIBANA_HOST}/app/discover  (log in as elastic)"
+echo "Done. Kibana is not published — reach it over an ssh tunnel:"
+echo "  ssh -L 5601:localhost:5601 <box>   then open http://localhost:5601/app/discover"
+echo "  (log in as elastic)"

@@ -61,7 +61,7 @@ services:
   # ══ discovery ═══════════════════════════════════════════════════════════════════════════════
   eureka:
     <<: *service-base
-    image: ${RELAY_REGISTRY:-relay}/eureka:${RELAY_IMAGE_TAG:-latest}
+    image: ${RELAY_REGISTRY:-relay}/eureka:${EUREKA_TAG:-latest}
     container_name: relay-eureka
     environment:
       RELAY_LOG_DIR: /var/log/relay
@@ -82,7 +82,7 @@ services:
   # ══ application services ════════════════════════════════════════════════════════════════════
   api-gateway:
     <<: [*service-base, *service-healthcheck]
-    image: ${RELAY_REGISTRY:-relay}/api-gateway:${RELAY_IMAGE_TAG:-latest}
+    image: ${RELAY_REGISTRY:-relay}/api-gateway:${API_GATEWAY_TAG:-latest}
     container_name: relay-api-gateway
     environment:
       <<: *service-env
@@ -94,7 +94,7 @@ services:
 
   auth:
     <<: [*service-base, *service-healthcheck]
-    image: ${RELAY_REGISTRY:-relay}/auth:${RELAY_IMAGE_TAG:-latest}
+    image: ${RELAY_REGISTRY:-relay}/auth:${AUTH_TAG:-latest}
     container_name: relay-auth
     environment:
       <<: *service-env
@@ -114,7 +114,7 @@ services:
 
   user:
     <<: [*service-base, *service-healthcheck]
-    image: ${RELAY_REGISTRY:-relay}/user:${RELAY_IMAGE_TAG:-latest}
+    image: ${RELAY_REGISTRY:-relay}/user:${USER_TAG:-latest}
     container_name: relay-user
     environment:
       <<: *service-env
@@ -129,7 +129,7 @@ services:
 
   message:
     <<: [*service-base, *service-healthcheck]
-    image: ${RELAY_REGISTRY:-relay}/message:${RELAY_IMAGE_TAG:-latest}
+    image: ${RELAY_REGISTRY:-relay}/message:${MESSAGE_TAG:-latest}
     container_name: relay-message
     environment:
       <<: *service-env
@@ -146,7 +146,7 @@ services:
 
   notification:
     <<: [*service-base, *service-healthcheck]
-    image: ${RELAY_REGISTRY:-relay}/notification:${RELAY_IMAGE_TAG:-latest}
+    image: ${RELAY_REGISTRY:-relay}/notification:${NOTIFICATION_TAG:-latest}
     container_name: relay-notification
     environment:
       <<: *service-env
@@ -176,7 +176,7 @@ services:
 
   websocket-gateway:
     <<: *service-base
-    image: ${RELAY_REGISTRY:-relay}/websocket-gateway:${RELAY_IMAGE_TAG:-latest}
+    image: ${RELAY_REGISTRY:-relay}/websocket-gateway:${WEBSOCKET_GATEWAY_TAG:-latest}
     container_name: relay-websocket-gateway
     environment:
       <<: *service-env
@@ -198,7 +198,7 @@ services:
 
   call:
     <<: *service-base
-    image: ${RELAY_REGISTRY:-relay}/call:${RELAY_IMAGE_TAG:-latest}
+    image: ${RELAY_REGISTRY:-relay}/call:${CALL_TAG:-latest}
     container_name: relay-call
     environment:
       <<: *service-env
@@ -519,11 +519,12 @@ services:
       - certbot-webroot:/var/www/certbot:ro
       - nginx-cache:/var/cache/nginx
     environment:
+      # The edge is a SINGLE vhost routed by path, so this is the only hostname the template
+      # reads. AUTH_HOST, SFU_HOST and TURN_HOST are still read elsewhere — by Keycloak, by
+      # call-service and by coturn — and all four must hold the SAME value; see the header of
+      # nginx/conf.d/relay.conf.template. Kibana is no longer a vhost at all (ssh tunnel), which
+      # is why KIBANA_HOST and ADMIN_ALLOW_CIDR are absent here.
       RELAY_API_HOST: ${API_HOST:?set API_HOST}
-      RELAY_AUTH_HOST: ${AUTH_HOST:?set AUTH_HOST}
-      RELAY_SFU_HOST: ${SFU_HOST:?set SFU_HOST}
-      RELAY_KIBANA_HOST: ${KIBANA_HOST:?set KIBANA_HOST}
-      RELAY_ADMIN_ALLOW_CIDR: ${ADMIN_ALLOW_CIDR:?set ADMIN_ALLOW_CIDR}
       # envsubst would otherwise also expand $host, $remote_addr and every other nginx variable
       # in the template into empty strings. The filter restricts it to our own prefix, which is
       # the whole reason these are RELAY_-prefixed here and not in .env.
@@ -633,9 +634,18 @@ services:
     container_name: relay-kibana
     restart: unless-stopped
     networks: [relay-network]
+    ports:
+      # Bound to LOOPBACK, not 0.0.0.0 — the one host port in this file that is not a published
+      # one. Nothing off the box can reach it; `ssh -L 5601:localhost:5601 <box>` can. This is
+      # what replaced the logs.<domain> vhost when the edge collapsed to a single hostname: the
+      # index holds every log line the system produces, and a login page for it does not belong
+      # on the public internet of a one-box deploy.
+      - "127.0.0.1:5601:5601"
     environment:
       SERVER_NAME: kibana
-      SERVER_PUBLICBASEURL: https://${KIBANA_HOST}
+      # Reached through an ssh tunnel on localhost, not through nginx — so the base URL it
+      # generates for itself has to match what the browser typed at the other end of the tunnel.
+      SERVER_PUBLICBASEURL: http://localhost:5601
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
       ELASTICSEARCH_USERNAME: kibana_system
       # Set by deploy/bootstrap-elk.sh — the kibana_system password cannot be supplied at

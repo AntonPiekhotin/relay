@@ -1,0 +1,101 @@
+name: service
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        required: true
+        type: string
+
+concurrency:
+  group: service-${{ inputs.service }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: publish common
+        run: cd common && ./gradlew --no-daemon publishToMavenLocal
+
+      - name: build + test
+        run: cd "${{ inputs.service }}" && ./gradlew --no-daemon build
+
+      - uses: docker/setup-qemu-action@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+        if: github.ref == 'refs/heads/main'
+
+      - uses: docker/login-action@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: image name and tag
+        if: github.ref == 'refs/heads/main'
+        id: img
+        run: |
+          echo "repo=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/${{ inputs.service }}" >> "$GITHUB_OUTPUT"
+          echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        if: github.ref == 'refs/heads/main'
+        with:
+          context: .
+          file: deploy/Dockerfile
+          build-args: |
+            SERVICE=${{ inputs.service }}
+            VERSION=0.0.1-SNAPSHOT
+          push: true
+          platforms: linux/arm64,linux/amd64
+          provenance: false
+          tags: |
+            ${{ steps.img.outputs.repo }}:${{ steps.img.outputs.tag }}
+            ${{ steps.img.outputs.repo }}:latest
+          cache-from: type=gha,scope=${{ inputs.service }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.service }}
+
+      - name: deploy
+        if: github.ref == 'refs/heads/main'
+        env:
+          SSH_TARGET:  ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          SSH_PORT:    ${{ vars.DEPLOY_SSH_PORT || '22' }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/relay' }}
+          SERVICE:     ${{ inputs.service }}
+          TAG:         ${{ steps.img.outputs.tag }}
+          SHA:         ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # Pinned host key rather than StrictHostKeyChecking=no: the deploy key is on this
+          # runner, and accepting any host key hands it to whatever answers on port 22.
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+          # Unquoted heredoc: every variable expands HERE, so the server sees only literals.
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" -o BatchMode=yes "$SSH_TARGET" bash -s <<REMOTE
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+          git fetch --prune origin
+          git -c advice.detachedHead=false checkout --detach "$SHA"
+          deploy/apply.sh "$SERVICE" "$TAG"
+          REMOTE

@@ -20,7 +20,11 @@ to the host. Hardening by layering is therefore impossible — only by replacing
 | everything else | nothing | the `relay-network` bridge only |
 
 LiveKit's signaling port 7880 is *not* published: it goes through nginx so clients get `wss://`.
-Kibana, Elasticsearch, Kafka, Redis and all five Postgres instances have no host ports at all.
+Elasticsearch, Kafka, Redis and all five Postgres instances have no host ports at all. Kibana has
+one, bound to `127.0.0.1:5601` — unreachable off the box, reachable through an ssh tunnel.
+
+**One hostname, routed by path.** nginx serves a single vhost; `/api/v1/` and `/ws` go to the app,
+`/realms/` to Keycloak, `/rtc` to LiveKit. See § DNS.
 
 ## Oracle Cloud (one instance, infra included)
 
@@ -80,7 +84,7 @@ exactly why `PUBLIC_IP` is a separate setting that coturn's `--external-ip` and 
 
 **Make the public IP reserved**, which the wizard cannot do: after launch, Instance → Attached
 VNICs → primary VNIC → IPv4 Addresses → edit → Ephemeral → Reserved. An ephemeral IP is released
-on every stop/start, and it is baked into five DNS records, a TLS cert, and `PUBLIC_IP`.
+on every stop/start, and it is baked into your DNS record, a TLS cert, and `PUBLIC_IP`.
 
 Then the ingress rules — a Network Security Group attached to the VNIC, or the subnet's default
 security list. Stateful (the default; leave "stateless" unchecked), source `0.0.0.0/0`:
@@ -89,7 +93,7 @@ security list. Stateful (the default; leave "stateless" unchecked), source `0.0.
 |---|---|---|---|
 | TCP | 22 | ssh, and the deploy job | see below |
 | TCP | 80 | ACME http-01 + the redirect to 443 | certbot cannot issue |
-| TCP | 443 | all four vhosts: `api.` (REST + `/ws`), `auth.`, `sfu.` (LiveKit signaling), `logs.` | nothing works |
+| TCP | 443 | everything HTTP — `/api/v1/`, `/ws`, `/realms/` (Keycloak), `/rtc` (LiveKit signaling) | nothing works |
 | TCP | 3478 | TURN over TCP | — |
 | UDP | **3478** | STUN + TURN. The one that matters. | 1:1 calls fail off-LAN |
 | TCP | 5349 | TURN over TLS | networks that block 3478 fail |
@@ -101,8 +105,8 @@ security list. Stateful (the default; leave "stateless" unchecked), source `0.0.
 Egress: leave the default allow-all. Certbot, GHCR pulls, FCM and APNs all need it.
 
 There is no rule for 7880 (LiveKit signaling goes through nginx so clients get `wss://`) and none
-for Kibana, Elasticsearch, Kafka, Redis or any Postgres — they have no host ports at all. Kibana
-is a vhost on 443, narrowed to `ADMIN_ALLOW_CIDR` by nginx rather than by a security rule.
+for Elasticsearch, Kafka, Redis or any Postgres — they have no host ports at all. Kibana needs no
+rule either: it is bound to loopback and reached over the ssh session you already have.
 
 **Port 22 is open to the internet, and that follows from the deploy design.** The deploy job ssh's
 in from GitHub-hosted runners, whose address ranges are large and change; they cannot be pinned in
@@ -133,15 +137,74 @@ did not land looks identical to a working one until a call drops its audio.
 Both layers must allow every port above: these rules are the *cloud* firewall, and
 `oci-bootstrap.sh` handles the *host* one. Opening only one is the failure described above.
 
-Last, five A records at the reserved IP — `api.` `auth.` `sfu.` `logs.` `turn.` — then
-**First deploy** below.
+### DNS
 
-Two OCI-specific notes once it is running. Free-tier egress is 10 TB/month, and a TURN-relayed
-call is roughly 60 kB/s each way — the relay is the only thing here that moves real volume.
-And an Always Free instance can be **reclaimed while idle**; the load this stack idles at is
-above that bar, but a stopped instance is not.
+**One A record.** The edge is a single nginx vhost routed by path, so one hostname carries
+everything. Set `API_HOST`, `AUTH_HOST`, `SFU_HOST` and `TURN_HOST` in `deploy/.env` to that same
+value — four consumers of one name, not four names:
 
----
+| `.env` | Read by | For |
+|---|---|---|
+| `API_HOST` | nginx | `server_name`, and the certificate every listener loads |
+| `AUTH_HOST` | Keycloak | `KC_HOSTNAME` — stamped into every token's `iss` claim |
+| `SFU_HOST` | call-service | the `wss://` URL handed to clients for LiveKit |
+| `TURN_HOST` | coturn | its TLS subject and its TURN realm |
+
+Disagreement between them is an outage, not a smell: a token minted under one issuer URL is
+rejected by all eight services validating against another.
+
+Paths on that name: `/api/v1/` and `/ws` → the app · `/realms/` and `/resources/` → Keycloak ·
+`/rtc` → LiveKit signaling. Everything else returns 404, `/internal/` and `/actuator/` explicitly
+so. Nothing is path-rewritten — Keycloak already serves `/realms/` at its own root and LiveKit
+already serves `/rtc` at its own root, which is what makes the collapse safe rather than fiddly.
+
+**Kibana does not fit and is not exposed.** It would need `server.basePath` to live under a path;
+instead it binds `127.0.0.1:5601` and you tunnel to it (§ Logs).
+
+#### Where the record lives
+
+- **Registering a domain**: OCI is not a registrar. Any registrar, ~$10/yr for a `.com`.
+- **Hosting the zone**: **OCI DNS is not in the Always Free tier** — the official list covers
+  VCNs, load balancers, VPN and flow logs, no DNS. It is paid and metered. Cloudflare DNS is free
+  and unlimited, as is the DNS most registrars bundle.
+- **Dynamic DNS** (No-IP, DuckDNS and friends) works, and is why this edge collapsed to one name
+  in the first place — their free tiers give you exactly one hostname.
+
+If you use Cloudflare, set the record to **DNS-only (grey cloud), not proxied (orange)**. A
+proxied record resolves to Cloudflare's IP, and Cloudflare proxies HTTP(S) on a fixed port set —
+so TURN on 3478/5349 breaks outright, and LiveKit breaks subtly: signaling survives on 443 while
+media on 7881/7882 goes to an address the client can no longer discover.
+
+#### If it is a free dynamic-DNS hostname
+
+Two things to know, neither of which is a reason not to:
+
+- **No-IP free hostnames must be confirmed every 30 days** or they are deleted. That name is
+  inside your TLS certificate and every issued token's `iss` claim, so losing it is not a DNS
+  outage, it is an auth outage. Put the reminder somewhere you will see it.
+- Parents like `ddns.net` are shared across all their users, so whether Let's Encrypt's
+  per-registered-domain rate limits are pooled depends on whether that parent is on the Public
+  Suffix List. Do not guess — `init-letsencrypt.sh --staging` exists for exactly this, and the
+  staging CA has no meaningful limits.
+
+Also: dynamic DNS points at whatever IP last checked in. Your OCI IP is *reserved* and static, so
+set it once and do not run a ddns update client — one would happily point your backend at a
+laptop.
+
+#### Verify before requesting certificates
+
+http-01 means Let's Encrypt connects back to `http://<host>/.well-known/acme-challenge/…`, so the
+name must resolve first. The production CA allows five failed authorisations per hostname per hour:
+
+```bash
+dig +short <host>          # must print the reserved IP
+```
+
+`init-letsencrypt.sh` requests one certificate per *distinct* name, so with all four `.env` vars
+holding the same value it makes exactly one request — not four attempts at the same name, which
+would burn the hour's budget before the first succeeded.
+
+Then **First deploy** below.
 
 ## Requirements
 
@@ -150,7 +213,8 @@ above that bar, but a stopped instance is not.
   containers removed.
 - **Docker Engine on Linux.** `coturn` uses `network_mode: host`, which Docker Desktop does not
   implement the same way.
-- **Five DNS A records**, all pointing at the box: `api.`, `auth.`, `sfu.`, `logs.`, `turn.`
+- **One DNS A record**, pointing at the box. `API_HOST`, `AUTH_HOST`, `SFU_HOST` and
+  `TURN_HOST` in `deploy/.env` all hold it; the edge routes by path, not by name.
 - **Firewall**: allow 80/tcp, 443/tcp, 3478/tcp+udp, 5349/tcp+udp, 49160-49200/udp, 7881/tcp,
   7882/udp. Deny everything else inbound.
 
@@ -159,7 +223,9 @@ above that bar, but a stopped instance is not.
 ```bash
 # 1. Build and push images (from a machine with the JDK — the server needs neither Java nor Gradle)
 scripts/build-images.sh --registry ghcr.io/<you> --push
-#    → prints a tag; put it in RELAY_IMAGE_TAG below
+#    → prints a tag; put it in every *_TAG line in deploy/.env below.
+#    Or skip this entirely: push to main once and let the eight workflows build and push,
+#    then come back here with `latest` in the *_TAG lines.
 
 # 2. On the server
 cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
@@ -183,61 +249,80 @@ Then rotate the Keycloak client secret — step 1 of "Secrets" below — and run
 
 ## Redeploying
 
+Each service carries its own tag in `deploy/.env` (`MESSAGE_TAG`, `CALL_TAG`, …), so a deploy is
+one line, one image and one container:
+
 ```bash
-scripts/build-images.sh --registry ghcr.io/<you> --push --tag v12
-sed -i 's/^RELAY_IMAGE_TAG=.*/RELAY_IMAGE_TAG=v12/' deploy/.env
-docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env pull
-docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d
+deploy/apply.sh message a1b2c3d      # on the server; CI calls exactly this over ssh
 ```
 
-Rolling back is the same three lines with the previous tag, which is the entire reason
-`RELAY_IMAGE_TAG=latest` is a bad idea in `.env` even though it works.
+It writes the tag, pulls, `up -d --no-deps <service>`, waits on the healthcheck compose already
+defines, and puts the previous tag back if the container does not come up. Rolling back is the
+same command with the old sha — which is why each line in `.env` is a real commit rather than
+`latest`.
+
+Per-service tags are the reason this is simple. With one shared tag, bumping it changes the
+resolved `image:` string for all eight, and compose hashes that string into its recreate decision
+— so every deploy would restart everything, and every tag would have to be a complete set of eight
+images. One tag per service removes both problems.
 
 **Restarting `websocket-gateway` disconnects every live client.** There is one node and there can
 only be one (ARCHITECTURE.md §6 — presence is decided from an in-memory registry, so a second node
 would declare users connected elsewhere offline). Clients reconnect and catch up over REST, so it
-is survivable, not invisible. Deploy it when traffic is low.
+is survivable, not invisible. It only restarts when its own code changes, which is the point.
 
-`deploy/remote-apply.sh` does the three lines above for a *subset* of services, waits on the
-healthchecks compose already defines, and rolls back to the previous tag if one does not come up:
+Config-only containers are separate, because their config is bind-mounted and compose cannot see
+a file edit:
 
 ```bash
-deploy/remote-apply.sh --tag v12 message call     # restart two services, leave six alone
-deploy/remote-apply.sh --tag v12 --infra          # reload nginx + ELK config, restart nothing else
-deploy/remote-apply.sh --tag v12 --full           # recreate everything (drops live sockets)
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env exec nginx nginx -t
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env exec nginx nginx -s reload
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env restart logstash filebeat
 ```
-
-Naming the services is not an optimisation, it is the only way to avoid a full restart: compose
-hashes the resolved `image:` string into its recreate decision, so bumping `RELAY_IMAGE_TAG` marks
-all eight as changed even where the digest is identical. The cost is that containers you did not
-name keep an older tag in their config hash, so the *next* `--full` restarts them once with
-identical bits.
 
 ---
 
 ## CI/CD (GitHub Actions)
 
-Two workflows, both driven by `scripts/changed-services.sh`:
+**One workflow per service.** `.github/workflows/<service>.yml` fires on a push touching that
+service, and does nothing otherwise — GitHub's own `paths:` filter decides, so there is no
+change-detection script and no orchestration:
 
-| | Trigger | Does |
-|---|---|---|
-| `.github/workflows/ci.yml` | PRs, pushes to any branch but `main` | builds + runs the test suites of the services that branch touched. No images, no registry. |
-| `.github/workflows/deploy.yml` | push to `main`, or manual | builds and pushes images for the changed services, copies the rest forward, restarts only the changed ones on the box. |
+```yaml
+name: Message CI/CD
 
-**What "changed" means on a deploy.** The base is the tag in `deploy/.env` *on the server*, read
-over ssh — "everything since what is actually running", not the push range. A run that was
-skipped, cancelled or failed therefore cannot lose commits. A change under `common/` or to
-`deploy/Dockerfile` rebuilds all eight, since every service embeds `common` as a published
-artifact.
+on:
+  push:
+    paths:
+      - 'message/**'
+      - 'common/**'
+      - 'deploy/Dockerfile'
+      - '.github/workflows/message.yml'
+      - '.github/workflows/service.yml'
 
-**Why unchanged services still get a new tag.** The server runs one `RELAY_IMAGE_TAG` for all
-eight images, so every tag must be a complete set or the next `compose pull` 404s. The `retag`
-job copies unchanged services forward with `docker buildx imagetools create` — a manifest write,
-no layers move — instead of rebuilding them.
+jobs:
+  ci:
+    uses: ./.github/workflows/service.yml
+    with:
+      service: message
+    secrets: inherit
+```
 
-Manual runs (**Actions → deploy → Run workflow**) take three switches: `force_all` (ignore change
-detection and rebuild everything — also the escape hatch when the registry has no image at the
-base tag), `full_recreate` (recreate every container), `skip_tests`.
+`common/**` is in all eight lists because every service embeds it as a published artifact — so a
+change there fires all eight workflows, in parallel, each rebuilding itself. `deploy/Dockerfile`
+likewise, since one Dockerfile builds all eight images.
+
+The shared body is `.github/workflows/service.yml`, called by all eight so the actual steps live
+in one place:
+
+1. JDK 25, `cd common && ./gradlew publishToMavenLocal` — every service resolves
+   `com.relay:common:1.0` from `~/.m2`, so skipping this builds against a stale copy.
+2. `cd <service> && ./gradlew build` — compile plus the Testcontainers integration tests.
+3. **On `main` only**: build `linux/arm64,linux/amd64` (the deploy host is Ampere A1; the jar is
+   architecture-independent so QEMU costs seconds), push `:<sha>` and `:latest` to GHCR, then ssh
+   in and run `deploy/apply.sh <service> <sha>`.
+
+On a branch it stops after step 2. So a branch push is CI, a main push is CD, in one file.
 
 ### One-time setup
 
@@ -255,36 +340,38 @@ base tag), `full_recreate` (recreate every container), `skip_tests`.
 | `DEPLOY_PATH` | `/opt/relay` | the repo checkout on the server |
 | `DEPLOY_SSH_PORT` | `22` | |
 
-Then create a `production` environment (Settings → Environments). It is referenced already; adding
-a **required reviewer** to it turns the pipeline into push-to-build / click-to-deploy without
-editing a workflow.
-
 **On the server**, once:
 
 ```bash
 git clone https://github.com/<you>/relay.git /opt/relay && cd /opt/relay
-# ...then the "First deploy" steps above, with these two lines in deploy/.env:
-#   RELAY_REGISTRY=ghcr.io/<you-lowercased>
-#   RELAY_IMAGE_TAG=<a real short sha, not `latest` — it is the diff base>
+# ...then "First deploy" above, with RELAY_REGISTRY=ghcr.io/<you-lowercased> in deploy/.env
 echo <a-ghcr-PAT-with-read:packages> | docker login ghcr.io -u <you> --password-stdin
 ```
 
-The GHCR packages are private on first push, so that `docker login` is what lets `compose pull`
-work. Make the packages public instead and it becomes optional.
+GHCR packages are private on first push, so that `docker login` is what lets `compose pull` work.
 
-The workflow leaves the server's checkout **detached at the deployed commit** — that is the point,
-not a mistake: the compose file, nginx config and `remote-apply.sh` that ran are exactly the ones
-CI built against. `git log -1` on the box tells you what is deployed.
+The workflow leaves the checkout **detached at the deployed commit** — deliberate: the compose
+file and `apply.sh` that ran are the ones CI built against. `git log -1` says what is deployed.
+
+### Concurrency
+
+A `common/**` change fires eight workflows at once, all sshing to the same box to edit the same
+`deploy/.env`. Two guards: each workflow serialises against itself (`concurrency` keyed on the
+service, newer run wins), and `apply.sh` takes an `flock` around the read-modify-write, so the
+eight interleave safely rather than losing each other's tags.
 
 ### What CI does not cover
 
-- **Keycloak realm changes.** `--import-realm` skips an existing realm; see the section below.
-  Nothing in the pipeline applies one.
+- **Keycloak realm changes.** `--import-realm` skips an existing realm; see below.
 - **Database migrations** run on service startup (Flyway), so they ship with the image. A
-  migration that fails leaves the service unhealthy and `remote-apply.sh` rolls the *image* back —
-  it cannot roll a migration back. Keep them additive.
-- **`docker-compose.prod.yml` changes.** The plan job flags them in the run summary and deploys
-  the changed services anyway; applying the rest needs a deliberate `full_recreate`.
+  migration that fails leaves the service unhealthy and `apply.sh` rolls the *image* back — it
+  cannot roll a migration back. Keep them additive.
+- **`docker-compose.prod.yml` and nginx/ELK config.** The checkout on the server moves to the new
+  commit, but only the deployed service is recreated. Applying the rest is the manual `exec nginx
+  -s reload` / `restart` above, or a deliberate `up -d`.
+- **A push touching only paths no workflow lists** builds nothing. That is the trade for having no
+  orchestrator: `paths:` is evaluated against the push's own commits, so if a run is skipped or
+  fails, that service simply stays on its old tag until something touches it again.
 - **The smoke test below**, especially step 5. No pipeline can place a call over a mobile network.
 
 ## Secrets
@@ -303,7 +390,8 @@ Keycloak admin console → clients → relay-client → credentials → regenera
 → copy into KEYCLOAK_CLIENT_SECRET in deploy/.env → up -d auth
 ```
 
-The admin console is deliberately not exposed — nginx returns 404 for `/admin/` on the auth host.
+The admin console is deliberately not exposed — nginx never proxies it (only `/realms/` and
+`/resources/` reach Keycloak) and returns 404 for `/admin/` explicitly on top of that.
 Reach it over a tunnel: `ssh -L 8081:localhost:8080 <box>` after
 `docker compose … exec keycloak …`, or temporarily publish the port.
 
@@ -334,8 +422,15 @@ messages.
 
 ## Logs
 
-`https://logs.<domain>`, restricted to `ADMIN_ALLOW_CIDR` at nginx and behind Elasticsearch's own
-authentication (log in as `elastic`). Retention is 30 days (`elk/es/ilm-relay-prod.json`); dev is
+Kibana is not published. It binds `127.0.0.1:5601` on the host, so the tunnel you already have is
+the access control:
+
+```bash
+ssh -L 5601:localhost:5601 <box>     # then http://localhost:5601/app/discover
+```
+
+Log in as `elastic`. Nothing about it is reachable from the internet, which is the point — the
+index holds every log line the system produces, redacted for credentials but not for content. Retention is 30 days (`elk/es/ilm-relay-prod.json`); dev is
 3. Only INFO and above is shipped — `logging.threshold.file` — so a *successful* request produces
 no records at all. That is the usual reason Discover looks empty, along with too narrow a time
 range and a missing data view.
@@ -352,8 +447,10 @@ Elasticsearch credentials differ, and all three come from the environment.
 
 In order, because each step depends on the one before:
 
-1. `curl https://api.<domain>/api/v1/auth/...` — register, then log in.
-2. Connect the socket to `wss://api.<domain>/ws`, send a message, confirm the ack.
+1. `curl https://<host>/api/v1/auth/...` — register, then log in.
+2. Connect the socket to `wss://<host>/ws`, send a message, confirm the ack.
+   Also `curl https://<host>/realms/relay-realm/.well-known/openid-configuration` — the path
+   routing to Keycloak is the part a name-based setup never had to prove.
 3. Fetch history and the dialog list.
 4. Push to a real device.
 5. **A 1:1 call from a mobile network, not from your wifi.** This is the only test that exercises

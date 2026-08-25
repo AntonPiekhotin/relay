@@ -1,0 +1,22 @@
+name: Eureka CI/CD
+
+on:
+  push:
+    paths:
+      - 'eureka/**'
+      - 'common/**'
+      - 'deploy/Dockerfile'
+      - '.github/workflows/eureka.yml'
+      - '.github/workflows/service.yml'
+
+jobs:
+  ci:
+    # Granted on the CALLING job — a reusable workflow's own `permissions:`
+    # cannot exceed what its caller was given, and pushing to GHCR needs write.
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/service.yml
+    with:
+      service: eureka
+    secrets: inherit

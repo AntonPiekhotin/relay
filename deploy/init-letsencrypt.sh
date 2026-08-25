@@ -24,7 +24,7 @@ set -a; . "$HERE/.env"; set +a
 STAGING_ARG=""
 [ "${1:-}" = "--staging" ] && STAGING_ARG="--staging"
 
-HOSTS="$API_HOST $AUTH_HOST $SFU_HOST $KIBANA_HOST $TURN_HOST"
+HOSTS=$(printf '%s\n' "$API_HOST" "$AUTH_HOST" "$SFU_HOST" "$TURN_HOST" | awk 'NF && !seen[$0]++')
 : "${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL in deploy/.env}"
 
 echo "==> hostnames: $HOSTS"

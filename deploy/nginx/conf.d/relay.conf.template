@@ -1,6 +1,27 @@
 # Rendered by the nginx image's envsubst at container start. Only ${RELAY_*} names are
 # substituted (NGINX_ENVSUBST_FILTER in compose) — without that filter envsubst would also eat
 # $host, $remote_addr and every other nginx variable on this page.
+#
+# ── SINGLE-HOSTNAME EDGE ────────────────────────────────────────────────────────────────────
+#
+# One name serves everything, routed by PATH rather than by `Host`. This is the shape to use when
+# you have exactly one DNS record — a free dynamic-DNS hostname, say — instead of the five
+# subdomains the .env still names separately.
+#
+# Set API_HOST, AUTH_HOST, SFU_HOST and TURN_HOST in deploy/.env to the SAME value. Only
+# ${RELAY_API_HOST} is read here; the others are still read by Keycloak (KC_HOSTNAME, which
+# stamps every token's `iss`), coturn (its TLS subject and TURN realm) and call-service (the
+# LiveKit URL handed to clients), and all four must agree or a token minted through one is
+# rejected by another.
+#
+# No path rewriting anywhere below, and that is what makes this collapse safe rather than
+# fiddly: Keycloak already serves `/realms/` at its own root, LiveKit already serves `/rtc` at
+# its own root, and api-gateway already owns `/api/v1/`. The prefixes do not collide, so each
+# proxy_pass hands the URI straight through.
+#
+# Kibana is the one thing that does NOT fit: it needs server.basePath to live under a path. It is
+# deliberately not exposed here at all — reach it over an ssh tunnel instead (deploy/README.md
+# § Logs). That is better than a public login page for an index holding every log line anyway.
 
 # Docker's embedded DNS. Without an explicit resolver nginx resolves each upstream name once at
 # startup and caches it forever, so a container that comes back with a new bridge IP serves 502
@@ -8,9 +29,6 @@
 # resolution per request — and it is why every proxy_pass carries an explicit $request_uri, since
 # a variable proxy_pass drops the URI that a literal one would have passed through.
 resolver 127.0.0.11 valid=10s ipv6=off;
-
-# ── shared proxy settings ───────────────────────────────────────────────────────────────────
-# (an include file would be cleaner, but one template keeps the whole edge readable in one place)
 
 # ── :80 — ACME challenge, and nothing else ──────────────────────────────────────────────────
 server {
@@ -39,7 +57,7 @@ server {
     return 444;
 }
 
-# ── api.<domain> — REST and the WebSocket ───────────────────────────────────────────────────
+# ── the one vhost ───────────────────────────────────────────────────────────────────────────
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
@@ -55,13 +73,16 @@ server {
     ssl_stapling on;
     ssl_stapling_verify on;
 
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # No includeSubDomains: on a shared dynamic-DNS parent (`*.ddns.net`) that would assert HSTS
+    # for every other user's hostname under it, which is not ours to assert.
+    add_header Strict-Transport-Security "max-age=31536000" always;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
     add_header Referrer-Policy no-referrer always;
 
     limit_conn connzone 64;
 
+    # ── denied outright ─────────────────────────────────────────────────────────────────────
     # `/internal/**` is service-to-service and trusts a caller-supplied identity (CLAUDE.md
     # invariant 10). It is already unreachable by construction — api-gateway declares five
     # explicit routes and Gateway MVC ships no discovery locator — but that is one config change
@@ -72,6 +93,12 @@ server {
     # for a healthcheck on the bridge and wrong for the public internet.
     location ^~ /actuator/ { return 404; }
 
+    # Keycloak's admin console. Not proxied below in the first place — only /realms/ and
+    # /resources/ are — but stated explicitly so that widening the Keycloak location later cannot
+    # publish it by accident. Realm config happens over an ssh tunnel to 8080 on the box.
+    location ^~ /admin/ { return 404; }
+
+    # ── api-gateway ─────────────────────────────────────────────────────────────────────────
     # The only unauthenticated endpoint group: registration, login, refresh.
     location ^~ /api/v1/auth/ {
         limit_req zone=authzone burst=10 nodelay;
@@ -87,9 +114,10 @@ server {
         include /etc/nginx/templates/proxy-common.conf;
     }
 
-    # websocket-gateway is NOT behind api-gateway — it has no route there and clients connect to
-    # it directly. The token rides the `access_token` subprotocol, so Sec-WebSocket-Protocol has
-    # to survive the hop; it is not a hop-by-hop header, so it passes untouched.
+    # ── websocket-gateway ───────────────────────────────────────────────────────────────────
+    # NOT behind api-gateway — it has no route there and clients connect to it directly. The
+    # token rides the `access_token` subprotocol, so Sec-WebSocket-Protocol has to survive the
+    # hop; it is not a hop-by-hop header, so it passes untouched.
     location = /ws {
         set $upstream_ws websocket-gateway:8083;
         proxy_pass http://$upstream_ws$request_uri;
@@ -107,28 +135,14 @@ server {
         proxy_buffering off;
     }
 
-    location / { return 404; }
-}
-
-# ── auth.<domain> — Keycloak ────────────────────────────────────────────────────────────────
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name ${RELAY_AUTH_HOST};
-
-    ssl_certificate     /etc/letsencrypt/live/${RELAY_AUTH_HOST}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${RELAY_AUTH_HOST}/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-    # The admin console is not something a public messenger backend needs to expose. Realm
-    # configuration happens over an SSH tunnel to 8080 on the box.
-    location ^~ /admin/ { return 404; }
-    location = /       { return 404; }
-
-    location / {
+    # ── Keycloak ────────────────────────────────────────────────────────────────────────────
+    # Two prefixes, not `/`. `/realms/` carries the token, JWKS, userinfo, logout and OIDC
+    # discovery endpoints; `/resources/` is the static assets those pages reference. Everything
+    # else Keycloak serves — the admin console, the account console, metrics — stays unreachable.
+    #
+    # KC_HOSTNAME must be https://<this same host>, because Keycloak stamps it into every token's
+    # `iss` claim and all eight services validate that claim against their issuer-uri.
+    location ^~ /realms/ {
         limit_req zone=authzone burst=20 nodelay;
         set $upstream_kc keycloak:8080;
         proxy_pass http://$upstream_kc$request_uri;
@@ -138,21 +152,23 @@ server {
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-Port  443;
     }
-}
 
-# ── sfu.<domain> — LiveKit signaling only ───────────────────────────────────────────────────
-# Media is UDP 7882 / TCP 7881 straight to the container and never passes through here.
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name ${RELAY_SFU_HOST};
+    location ^~ /resources/ {
+        set $upstream_kc keycloak:8080;
+        proxy_pass http://$upstream_kc$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port  443;
+    }
 
-    ssl_certificate     /etc/letsencrypt/live/${RELAY_SFU_HOST}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${RELAY_SFU_HOST}/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-
-    location / {
+    # ── LiveKit signaling ───────────────────────────────────────────────────────────────────
+    # `/rtc` (the signal WebSocket) and `/rtc/validate`. Media is UDP 7882 / TCP 7881 straight to
+    # the container and never passes through here. LiveKit's server API (`/twirp/…`) is
+    # deliberately absent — call-service reaches it on the bridge at http://livekit:7880, so it
+    # has no reason to be public, and it can create rooms.
+    #
+    # Clients are handed RELAY_CALL_LIVEKIT_URL=wss://<this host>; the SDK appends /rtc itself.
+    location ^~ /rtc {
         set $upstream_lk livekit:7880;
         proxy_pass http://$upstream_lk$request_uri;
         include /etc/nginx/templates/proxy-common.conf;
@@ -164,32 +180,6 @@ server {
         proxy_send_timeout 3600s;
         proxy_buffering off;
     }
-}
 
-# ── logs.<domain> — Kibana, source-restricted ───────────────────────────────────────────────
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name ${RELAY_KIBANA_HOST};
-
-    ssl_certificate     /etc/letsencrypt/live/${RELAY_KIBANA_HOST}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${RELAY_KIBANA_HOST}/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-
-    # The index holds every log line the system produces, redacted for credentials but not for
-    # content. Elasticsearch's own auth is on, so this is the second lock rather than the only
-    # one — but it is the one that keeps the login page itself off the public internet.
-    allow ${RELAY_ADMIN_ALLOW_CIDR};
-    deny  all;
-
-    location / {
-        set $upstream_kb kibana:5601;
-        proxy_pass http://$upstream_kb$request_uri;
-        include /etc/nginx/templates/proxy-common.conf;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_read_timeout 300s;
-    }
+    location / { return 404; }
 }
