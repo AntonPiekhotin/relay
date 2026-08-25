@@ -82,6 +82,12 @@ server {
 
     limit_conn connzone 64;
 
+    # Defaults for every location below; /ws and /rtc override them with 3600s because they hold
+    # a socket open. Set here rather than in proxy-common.conf, which is included per-location and
+    # therefore cannot be overridden — see the comment in that file.
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+
     # ── denied outright ─────────────────────────────────────────────────────────────────────
     # `/internal/**` is service-to-service and trusts a caller-supplied identity (CLAUDE.md
     # invariant 10). It is already unreachable by construction — api-gateway declares five
@@ -149,7 +155,8 @@ server {
         include /etc/nginx/templates/proxy-common.conf;
         # KC_PROXY_HEADERS=xforwarded makes Keycloak trust these; without them every issued
         # token and every redirect comes back as http://keycloak:8080.
-        proxy_set_header X-Forwarded-Proto https;
+        # X-Forwarded-Proto comes from proxy-common.conf as $scheme (https here); setting it
+        # again would send the header twice. Port is not in there, so it is set once.
         proxy_set_header X-Forwarded-Port  443;
     }
 
@@ -157,7 +164,8 @@ server {
         set $upstream_kc keycloak:8080;
         proxy_pass http://$upstream_kc$request_uri;
         include /etc/nginx/templates/proxy-common.conf;
-        proxy_set_header X-Forwarded-Proto https;
+        # X-Forwarded-Proto comes from proxy-common.conf as $scheme (https here); setting it
+        # again would send the header twice. Port is not in there, so it is set once.
         proxy_set_header X-Forwarded-Port  443;
     }
 
