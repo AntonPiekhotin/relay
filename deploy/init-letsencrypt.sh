@@ -30,20 +30,24 @@ HOSTS=$(printf '%s\n' "$API_HOST" "$AUTH_HOST" "$SFU_HOST" "$TURN_HOST" | awk 'N
 echo "==> hostnames: $HOSTS"
 echo "    every one of these must already resolve to this host, or the challenge fails"
 
-echo "==> placing throwaway self-signed certificates"
-for h in $HOSTS; do
-  $COMPOSE run --rm --entrypoint sh certbot -c "
-    mkdir -p /etc/letsencrypt/live/$h &&
+# nginx will not start without a certificate file to load, so one has to exist before it can
+# serve the ACME challenge that earns the real one.
+placeholder() {
+  $COMPOSE run --rm --no-deps --entrypoint sh certbot -c "
+    mkdir -p /etc/letsencrypt/live/$1 &&
     openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
-      -keyout /etc/letsencrypt/live/$h/privkey.pem \
-      -out    /etc/letsencrypt/live/$h/fullchain.pem \
-      -subj '/CN=$h' 2>/dev/null"
-done
+      -keyout /etc/letsencrypt/live/$1/privkey.pem \
+      -out    /etc/letsencrypt/live/$1/fullchain.pem \
+      -subj '/CN=$1' 2>/dev/null"
+}
+
+echo "==> placing throwaway self-signed certificates"
+for h in $HOSTS; do placeholder "$h"; done
 
 echo "==> starting nginx so it can serve /.well-known/acme-challenge"
 # --no-deps: nginx declares depends_on for the gateways and Keycloak, and without this the whole
 # stack boots just to answer a challenge.
-$COMPOSE up -d --no-deps nginx
+$COMPOSE up -d --no-deps --force-recreate nginx
 sleep 5
 
 echo "==> requesting real certificates"
@@ -59,7 +63,17 @@ for h in $HOSTS; do
     $STAGING_ARG \
     --email "$LETSENCRYPT_EMAIL" --agree-tos --no-eff-email \
     --non-interactive \
-    -d "$h" || { echo "certificate for $h failed — check the A record and port 80" >&2; exit 1; }
+    -d "$h" || {
+      # Put the throwaway back. Without this, the delete above has left nginx pointing at a
+      # certificate that no longer exists — so it crash-loops, stops serving :80, and every
+      # subsequent attempt fails at the challenge because nothing answers. One failure would
+      # otherwise lock the host out of ever getting a certificate.
+      echo "  restoring the placeholder so nginx can start again" >&2
+      placeholder "$h"
+      $COMPOSE up -d --no-deps --force-recreate nginx
+      echo "certificate for $h failed — check the A record and port 80" >&2
+      exit 1
+    }
 done
 
 echo "==> reloading nginx"
