@@ -32,8 +32,7 @@ jobs:
         run: cd common && ./gradlew --no-daemon publishToMavenLocal
 
       # SKIP_TESTS is a repository variable (Settings -> Secrets and variables -> Actions ->
-      # Variables), not a default. Set it to `true` to ship past a known-broken suite; unset or
-      # remove it to go back to gating on tests.
+      # Variables), not a default. Set it to `true` to ship past a known-broken suite.
       - name: build + test
         run: |
           cd "${{ inputs.service }}"
