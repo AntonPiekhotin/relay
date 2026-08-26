@@ -189,5 +189,40 @@ server {
         proxy_buffering off;
     }
 
+    # ── Kibana ──────────────────────────────────────────────────────────────────────────────
+    # Elasticsearch's own authentication is the real lock; this allowlist is the second one, and
+    # the one that keeps the login page itself off the open internet when it is narrowed. The
+    # index holds every log line the system produces — redacted for credentials, not for content.
+    # Kibana's login endpoint, rate-limited. An exact-match location wins over the ^~ prefix
+    # below, so this is the only path that gets throttled — the prefix block cannot carry the
+    # limit itself because one Kibana page pulls dozens of assets at once and would trip it.
+    # 5r/s with a burst of 5 is invisible to a person typing a password and ruinous to a script.
+    location = /kibana/internal/security/login {
+        allow ${RELAY_ADMIN_ALLOW_CIDR};
+        deny  all;
+
+        limit_req zone=authzone burst=5 nodelay;
+
+        set $upstream_kb kibana:5601;
+        proxy_pass http://$upstream_kb$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
+    }
+
+    location ^~ /kibana {
+        allow ${RELAY_ADMIN_ALLOW_CIDR};
+        deny  all;
+
+        set $upstream_kb kibana:5601;
+        proxy_pass http://$upstream_kb$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
+
+        # Kibana uses websockets for some panels, and reports can take a while to render.
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
     location / { return 404; }
 }
