@@ -86,14 +86,21 @@ jobs:
       - name: deploy
         if: github.ref == 'refs/heads/main'
         env:
-          SSH_TARGET:  ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           SSH_PORT:    ${{ vars.DEPLOY_SSH_PORT || '22' }}
-          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/relay' }}
+          RAW_PATH:    ${{ vars.DEPLOY_PATH || '/opt/relay' }}
           SERVICE:     ${{ inputs.service }}
           TAG:         ${{ steps.img.outputs.tag }}
           SHA:         ${{ github.sha }}
         run: |
           set -euo pipefail
+
+          trim() { printf '%s' "$1" | tr -d '[:space:]'; }
+          SSH_TARGET="$(trim "$DEPLOY_USER")@$(trim "$DEPLOY_HOST")"
+          SSH_PORT="$(trim "$SSH_PORT")"
+          DEPLOY_PATH="$(trim "$RAW_PATH")"
+          echo "deploying $SERVICE to $DEPLOY_PATH on port $SSH_PORT"
           install -m 700 -d ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
