@@ -7,6 +7,7 @@ import jakarta.persistence.IdClass
 import jakarta.persistence.Table
 import java.io.Serializable
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 data class DeviceTokenId(
     val userId: String = "",
@@ -44,5 +45,5 @@ class DeviceToken(
     var voipToken: String?,
 
     @Column(name = "updated_at", nullable = false)
-    var updatedAt: Instant = Instant.now()
+    var updatedAt: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS)
 )

@@ -11,6 +11,7 @@ import jakarta.persistence.Id
 import jakarta.persistence.JoinColumn
 import jakarta.persistence.Table
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /** Separates the two ids inside a [Dialog.directKey]. Rejected in an id, or the key would be ambiguous. */
@@ -68,7 +69,7 @@ class Dialog(
     val participantIds: MutableSet<String> = mutableSetOf(),
 
     @Column(name = "created_at", nullable = false, updatable = false)
-    val createdAt: Instant = Instant.now(),
+    val createdAt: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS),
 
     @Column(name = "last_message_at")
     var lastMessageAt: Instant? = null

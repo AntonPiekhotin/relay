@@ -8,6 +8,7 @@ import jakarta.persistence.Index
 import jakarta.persistence.Table
 import java.io.Serializable
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 data class ContactId(
     val ownerId: String = "",
@@ -40,5 +41,5 @@ class Contact(
     val contactUserId: String,
 
     @Column(name = "created_at", nullable = false, updatable = false)
-    val createdAt: Instant = Instant.now()
+    val createdAt: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS)
 )

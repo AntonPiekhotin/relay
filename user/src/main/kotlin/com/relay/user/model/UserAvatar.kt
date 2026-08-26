@@ -5,6 +5,7 @@ import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
 
@@ -51,5 +52,5 @@ class UserAvatar(
     var sizeBytes: Int,
 
     @Column(name = "updated_at", nullable = false)
-    var updatedAt: Instant = Instant.now()
+    var updatedAt: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS)
 )

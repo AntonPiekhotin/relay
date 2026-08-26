@@ -9,6 +9,7 @@ import jakarta.persistence.Index
 import jakarta.persistence.Table
 import jakarta.persistence.UniqueConstraint
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
@@ -53,7 +54,7 @@ class Message(
     val clientMessageId: String,
 
     @Column(name = "sent_at", nullable = false, updatable = false)
-    val sentAt: Instant = Instant.now(),
+    val sentAt: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS),
 
     @Enumerated(EnumType.STRING)
     @Column(name = "kind", nullable = false, updatable = false, length = 32)

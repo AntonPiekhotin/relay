@@ -6,6 +6,7 @@ import jakarta.persistence.Id
 import jakarta.persistence.Index
 import jakarta.persistence.Table
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /**
  * `users` rather than `user` because `user` is a reserved word in Postgres.
@@ -45,8 +46,8 @@ class User(
     var avatarUrl: String? = null,
 
     @Column(name = "created_at", nullable = false, updatable = false)
-    val createdAt: Instant = Instant.now(),
+    val createdAt: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS),
 
     @Column(name = "updated_at", nullable = false)
-    var updatedAt: Instant = Instant.now()
+    var updatedAt: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS)
 )

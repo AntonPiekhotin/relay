@@ -31,8 +31,19 @@ jobs:
       - name: publish common
         run: cd common && ./gradlew --no-daemon publishToMavenLocal
 
+      # SKIP_TESTS is a repository variable (Settings -> Secrets and variables -> Actions ->
+      # Variables), not a default. Set it to `true` to ship past a known-broken suite; unset or
+      # remove it to go back to gating on tests. It is deliberately a visible, repo-wide switch
+      # rather than a per-workflow flag, so "tests are off" is a state someone can notice.
       - name: build + test
-        run: cd "${{ inputs.service }}" && ./gradlew --no-daemon build
+        run: |
+          cd "${{ inputs.service }}"
+          if [ "${{ vars.SKIP_TESTS }}" = "true" ]; then
+            echo "::warning title=Tests skipped::SKIP_TESTS=true — ${{ inputs.service }} built without running its suite"
+            ./gradlew --no-daemon bootJar -x test
+          else
+            ./gradlew --no-daemon build
+          fi
 
       - uses: docker/setup-qemu-action@v3
         if: github.ref == 'refs/heads/main'

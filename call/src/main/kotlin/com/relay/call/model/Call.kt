@@ -8,6 +8,7 @@ import jakarta.persistence.Table
 import jakarta.persistence.Version
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 @Entity
@@ -42,7 +43,7 @@ class Call(
     var status: CallStatus = CallStatus.RINGING,
 
     @Column(name = "started_at", nullable = false, updatable = false)
-    val startedAt: Instant = Instant.now(),
+    val startedAt: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS),
 
     @Column(name = "answered_at")
     var answeredAt: Instant? = null,
@@ -62,7 +63,7 @@ class Call(
     var version: Long? = null
 ) {
 
-    fun terminate(status: CallStatus, reason: String, at: Instant = Instant.now()) {
+    fun terminate(status: CallStatus, reason: String, at: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS)) {
         require(status.isTerminal) { "$status is not a terminal status" }
         this.status = status
         this.endedAt = at
