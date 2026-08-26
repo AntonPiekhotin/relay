@@ -525,6 +525,9 @@ services:
       # nginx/conf.d/relay.conf.template. Kibana is no longer a vhost at all (ssh tunnel), which
       # is why KIBANA_HOST and ADMIN_ALLOW_CIDR are absent here.
       RELAY_API_HOST: ${API_HOST:?set API_HOST}
+      # Source range allowed to reach /kibana. Defaults to open because the alternative is
+      # locking yourself out from a dynamic home address; narrow it when you have a fixed one.
+      RELAY_ADMIN_ALLOW_CIDR: ${ADMIN_ALLOW_CIDR:-0.0.0.0/0}
       # envsubst would otherwise also expand $host, $remote_addr and every other nginx variable
       # in the template into empty strings. The filter restricts it to our own prefix, which is
       # the whole reason these are RELAY_-prefixed here and not in .env.
@@ -649,10 +652,9 @@ services:
       # on the public internet of a one-box deploy.
       - "127.0.0.1:5601:5601"
     environment:
-      SERVER_NAME: kibana
-      # Reached through an ssh tunnel on localhost, not through nginx — so the base URL it
-      # generates for itself has to match what the browser typed at the other end of the tunnel.
-      SERVER_PUBLICBASEURL: http://localhost:5601
+      SERVER_BASEPATH: /kibana
+      SERVER_REWRITEBASEPATH: "true"
+      SERVER_PUBLICBASEURL: https://${API_HOST}/kibana
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
       ELASTICSEARCH_USERNAME: kibana_system
       # Set by deploy/bootstrap-elk.sh — the kibana_system password cannot be supplied at

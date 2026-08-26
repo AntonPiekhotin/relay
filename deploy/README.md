@@ -20,8 +20,9 @@ to the host. Hardening by layering is therefore impossible — only by replacing
 | everything else | nothing | the `relay-network` bridge only |
 
 LiveKit's signaling port 7880 is *not* published: it goes through nginx so clients get `wss://`.
-Elasticsearch, Kafka, Redis and all five Postgres instances have no host ports at all. Kibana has
-one, bound to `127.0.0.1:5601` — unreachable off the box, reachable through an ssh tunnel.
+Elasticsearch, Kafka, Redis and all five Postgres instances have no host ports at all. Kibana is
+served by nginx at `/kibana` and *also* binds `127.0.0.1:5601`, so an ssh tunnel still reaches it
+when nginx is the thing that is broken.
 
 **One hostname, routed by path.** nginx serves a single vhost; `/api/v1/` and `/ws` go to the app,
 `/realms/` to Keycloak, `/rtc` to LiveKit. See § DNS.
@@ -106,7 +107,8 @@ Egress: leave the default allow-all. Certbot, GHCR pulls, FCM and APNs all need 
 
 There is no rule for 7880 (LiveKit signaling goes through nginx so clients get `wss://`) and none
 for Elasticsearch, Kafka, Redis or any Postgres — they have no host ports at all. Kibana needs no
-rule either: it is bound to loopback and reached over the ssh session you already have.
+rule of its own either: it rides the 443 rule as a path on the one vhost, gated by
+`ADMIN_ALLOW_CIDR` in nginx rather than by a security rule.
 
 **Port 22 is open to the internet, and that follows from the deploy design.** The deploy job ssh's
 in from GitHub-hosted runners, whose address ranges are large and change; they cannot be pinned in
@@ -158,8 +160,9 @@ Paths on that name: `/api/v1/` and `/ws` → the app · `/realms/` and `/resourc
 so. Nothing is path-rewritten — Keycloak already serves `/realms/` at its own root and LiveKit
 already serves `/rtc` at its own root, which is what makes the collapse safe rather than fiddly.
 
-**Kibana does not fit and is not exposed.** It would need `server.basePath` to live under a path;
-instead it binds `127.0.0.1:5601` and you tunnel to it (§ Logs).
+**Kibana rides the same vhost at `/kibana`**, using `server.basePath` + `rewriteBasePath` so it
+serves correctly under a prefix. It is gated by `ADMIN_ALLOW_CIDR` and also binds
+`127.0.0.1:5601` as a fallback (§ Logs).
 
 #### Where the record lives
 
@@ -422,21 +425,37 @@ messages.
 
 ## Logs
 
-Kibana is not published. It binds `127.0.0.1:5601` on the host, so the tunnel you already have is
-the access control:
+`https://<host>/kibana`, log in as `elastic` with `ELASTIC_PASSWORD`. Kibana is proxied by nginx
+under a path (`SERVER_BASEPATH` + `SERVER_REWRITEBASEPATH`), so nginx passes the URI through
+unchanged and Kibana strips the prefix itself.
 
-```bash
-ssh -L 5601:localhost:5601 <box>     # then http://localhost:5601/app/discover
+`ADMIN_ALLOW_CIDR` is **open by default**, deliberately: a home address changes whenever the ISP
+re-leases it, and an allowlist you cannot keep current locks you out of your own logs. Two things
+guard it instead — Elasticsearch's own authentication, and a `limit_req` of 5r/s that nginx
+applies to `/kibana/internal/security/login` only. It is on the login endpoint alone because one
+Kibana page pulls dozens of assets at once and a limit on the whole prefix would throttle the UI.
+
+Narrow the CIDR only if you have a genuinely stable address:
+
+```
+ADMIN_ALLOW_CIDR=203.0.113.45/32
 ```
 
-Log in as `elastic`. Nothing about it is reachable from the internet, which is the point — the
-index holds every log line the system produces, redacted for credentials but not for content. Retention is 30 days (`elk/es/ilm-relay-prod.json`); dev is
-3. Only INFO and above is shipped — `logging.threshold.file` — so a *successful* request produces
-no records at all. That is the usual reason Discover looks empty, along with too narrow a time
-range and a missing data view.
+Kibana also stays bound to `127.0.0.1:5601` on the host, so the tunnel still works and is what you
+want on the day nginx is the thing that is broken:
+
+```bash
+ssh -L 5601:localhost:5601 <box>      # then http://localhost:5601
+```
+
+Retention is 30 days (`elk/es/ilm-relay-prod.json`); dev is 3. Only INFO and above is shipped —
+`logging.threshold.file` — so a *successful* request produces no records at all. That is the usual
+reason Discover looks empty, along with too narrow a time range.
 
 The console stream stays at INFO here too (`LOGGING_THRESHOLD_CONSOLE`), readable with
-`docker compose … logs -f <service>` and capped at 3 × 20 MB per container.
+`docker compose … logs -f <service>` and capped at 3 × 20 MB per container. The per-request DEBUG
+narrative under `com.relay` never leaves the container log — find the failure in Kibana, take its
+`trace.id`, grep the console log for the rest.
 
 Services write ECS JSON into the shared `relay-logs` volume, which filebeat mounts read-only at
 the path the dev globs already expect — so `elk/filebeat/filebeat.yml` and the Logstash pipeline
