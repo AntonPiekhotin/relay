@@ -224,5 +224,9 @@ server {
         proxy_send_timeout 300s;
     }
 
-    location / { return 404; }
+    location / {
+          set $upstream_web web:80;
+          proxy_pass http://$upstream_web$request_uri;
+          include /etc/nginx/templates/proxy-common.conf;
+    }
 }
