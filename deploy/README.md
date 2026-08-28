@@ -460,10 +460,21 @@ Set it in only one of the two places and auth presents a secret Keycloak never h
 create-user call. A clean deploy cannot produce this, since both sides read the same variable; a
 rotation against an existing realm can.
 
-The admin console is deliberately not exposed — nginx never proxies it (only `/realms/` and
-`/resources/` reach Keycloak) and returns 404 for `/admin/` explicitly on top of that.
-Reach it over a tunnel: `ssh -L 8081:localhost:8080 <box>` after
-`docker compose … exec keycloak …`, or temporarily publish the port.
+### Reaching the admin console
+
+`https://<host>/admin` — Keycloak's admin console, behind the same `ADMIN_ALLOW_CIDR` allowlist
+that gates Kibana. Log in with `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD`.
+
+`/admin` carries the admin **REST API** as well as the console UI, so anything reaching it with a
+master-realm token can do whatever it likes to any realm — read client secrets, mint users, change
+the issuer. The allowlist is the second lock, not the only one: leaving `ADMIN_ALLOW_CIDR` at
+`0.0.0.0/0` publishes that login page to the internet. Narrow it to the address you administer
+from.
+
+Nothing else was needed to expose it — the console's assets already come from `/resources/` and
+its login already goes through `/realms/`, both proxied, and `/realms/` is rate-limited, so the
+admin login is throttled without a second `limit_req`. An ssh tunnel to `localhost:8080` on the
+box still works if you ever lock yourself out with the CIDR.
 
 ## Keycloak realm changes
 

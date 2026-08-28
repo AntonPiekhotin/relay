@@ -99,10 +99,8 @@ server {
     # for a healthcheck on the bridge and wrong for the public internet.
     location ^~ /actuator/ { return 404; }
 
-    # Keycloak's admin console. Not proxied below in the first place — only /realms/ and
-    # /resources/ are — but stated explicitly so that widening the Keycloak location later cannot
-    # publish it by accident. Realm config happens over an ssh tunnel to 8080 on the box.
-    location ^~ /admin/ { return 404; }
+    # Keycloak's admin console is NOT denied here — it is proxied further down, behind the same
+    # IP allowlist Kibana uses. See the Keycloak section.
 
     # ── api-gateway ─────────────────────────────────────────────────────────────────────────
     # The only unauthenticated endpoint group: registration, login, refresh.
@@ -166,6 +164,17 @@ server {
         include /etc/nginx/templates/proxy-common.conf;
         # X-Forwarded-Proto comes from proxy-common.conf as $scheme (https here); setting it
         # again would send the header twice. Port is not in there, so it is set once.
+        proxy_set_header X-Forwarded-Port  443;
+    }
+
+    # Keycloak's admin console
+    location ^~ /admin {
+        allow ${RELAY_ADMIN_ALLOW_CIDR};
+        deny  all;
+
+        set $upstream_kc keycloak:8080;
+        proxy_pass http://$upstream_kc$request_uri;
+        include /etc/nginx/templates/proxy-common.conf;
         proxy_set_header X-Forwarded-Port  443;
     }
 
