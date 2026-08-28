@@ -6,7 +6,7 @@ import org.slf4j.MDC
 /**
  * The correlation identifier that ties one request's log records together across services.
  *
- * It travels as the [HEADER] on HTTP hops and as a Kafka record header on event hops.
+ * It travels as the [HEADER] on HTTP hops and as a Kafka record header on event hops
  */
 object RequestId {
     const val HEADER: String = "X-Request-Id"
