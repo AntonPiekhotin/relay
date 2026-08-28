@@ -783,7 +783,7 @@
       "enabled": true,
       "alwaysDisplayInConsole": false,
       "clientAuthenticatorType": "client-secret",
-      "secret": "D0t5nQjQJAfrj7uSkChM6MkYpo1Mm2FA",
+      "secret": "${KEYCLOAK_CLIENT_SECRET}",
       "redirectUris": [
         "*"
       ],

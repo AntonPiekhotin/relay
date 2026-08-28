@@ -10,6 +10,81 @@ to the host. Hardening by layering is therefore impossible — only by replacing
 
 ---
 
+## Roadmap — read this first
+
+Eight shell scripts live in this repo. They fall into four groups, and **you only ever run three of
+them by hand.** Everything else is either a laptop convenience or something CI calls for you.
+
+| | Script | Run it | Why it can't just be a compose command |
+|---|---|---|---|
+| **Fresh box, once** | `deploy/oci-bootstrap.sh` | `sudo`, on the server | docker install, swap, sysctl, host firewall |
+| | `deploy/init-letsencrypt.sh` | on the server, before the first `up` | nginx won't start without a cert; certbot needs nginx to serve the challenge. Circular — something has to break it |
+| | `deploy/bootstrap-elk.sh` | on the server, after the first `up` | `kibana_system`'s password can only be set through the security API, once the cluster is live |
+| **Every deploy** | `deploy/apply.sh <svc> <tag>` | **CI runs it** | writes one tag, pulls, restarts one container, waits on health, rolls back if it fails |
+| **Laptop only** | `scripts/start-all.sh` / `stop-all.sh` | when developing | runs the eight services as host JVMs |
+| | `elk/setup.sh` | after `--profile logging up` | Kibana shows nothing without a data view |
+| **Optional** | `scripts/build-images.sh` | only to build images without CI | CI's `docker/build-push-action` does the same thing |
+
+So: **three commands on a fresh box, then `git push` forever.**
+
+### Fresh deploy, start to finish
+
+Roughly 45 minutes, most of it waiting on DNS and image builds.
+
+**Phase 1 — outside the box** (nothing here is reachable from inside the instance)
+
+1. Create the Ampere A1 instance: 4 OCPU / 24 GB, Ubuntu 24.04, arm64. → § Oracle Cloud
+2. Reserve its public IP, open the VCN security list, point one DNS A record at it. → § Networking, § DNS
+3. `dig +short <host>` must print that IP before you go near Let's Encrypt.
+
+**Phase 2 — prepare the box**
+
+4. `git clone <repo> /opt/relay && cd /opt/relay` — the whole repo, not just `deploy/`
+   (compose bind-mounts `../keycloak/import` and `../elk`).
+5. `sudo deploy/oci-bootstrap.sh`
+6. `cp deploy/.env.example deploy/.env && chmod 600 deploy/.env`, then fill in **every** blank.
+   → § Secrets
+7. `mkdir -p secrets && cp <your>-fcm.json secrets/fcm.json`
+
+**Phase 3 — TLS, before anything else starts**
+
+8. `deploy/init-letsencrypt.sh --staging` — then check it succeeded.
+9. `deploy/init-letsencrypt.sh` — the real certificate. Staging first is not optional: the
+   production CA allows five failed authorisations per hostname per hour.
+
+**Phase 4 — first start**
+
+10. Get images into the registry. Either push to `main` once and let the eight workflows build
+    them (leave every `*_TAG=latest`), or run `scripts/build-images.sh --registry ghcr.io/<you>
+    --push` from a machine with a JDK. → § CI/CD
+11. `docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d`
+12. `deploy/bootstrap-elk.sh` — Kibana crash-loops until this runs. Expected, not a fault.
+    Keycloak imports the realm on this first boot and resolves `KEYCLOAK_CLIENT_SECRET` from
+    `.env` into it, so there is nothing to run afterwards.
+
+**Phase 5 — hand it to CI**
+
+14. Add the four repo secrets and generate the deploy key. → § CI/CD § One-time setup
+15. Push to `main`. From here every deploy is: the service's workflow builds an image, sshes in,
+    and runs `deploy/apply.sh <service> <sha>`. Nothing else.
+16. Run the smoke test. → § Smoke test
+
+### The whole CI/CD flow, in five lines
+
+```
+push to main
+  └─ .github/workflows/<service>.yml         fires on its own paths: filter
+       └─ .github/workflows/service.yml      build → test → image → push to ghcr
+            └─ ssh <box>: deploy/apply.sh <service> <sha>
+                 └─ writes <SERVICE>_TAG in .env, pulls, up -d --no-deps, waits on health,
+                    puts the old tag back if it does not come up
+```
+
+There is no orchestrator and no change detection — GitHub's `paths:` filter is the whole of it.
+Eight near-identical workflow files, each four lines long, calling one shared `service.yml`.
+
+---
+
 ## What runs where
 
 | | Published | Reachable how |
@@ -223,32 +298,8 @@ Then **First deploy** below.
 
 ## First deploy
 
-```bash
-# 1. Build and push images (from a machine with the JDK — the server needs neither Java nor Gradle)
-scripts/build-images.sh --registry ghcr.io/<you> --push
-#    → prints a tag; put it in every *_TAG line in deploy/.env below.
-#    Or skip this entirely: push to main once and let the eight workflows build and push,
-#    then come back here with `latest` in the *_TAG lines.
-
-# 2. On the server
-cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
-$EDITOR deploy/.env                       # every blank must be filled; see "Secrets" below
-mkdir -p secrets && cp <your>-fcm.json secrets/fcm.json
-
-# 3. TLS. --staging first: the production CA allows five failed authorisations per hostname per
-#    hour, and one wrong A record burns them all.
-deploy/init-letsencrypt.sh --staging
-deploy/init-letsencrypt.sh
-
-# 4. Bring it up
-docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d
-
-# 5. Elasticsearch security bootstrap. Kibana crash-loops until this runs — that is expected,
-#    not a fault: kibana_system's password can only be set through the security API.
-deploy/bootstrap-elk.sh
-```
-
-Then rotate the Keycloak client secret — step 1 of "Secrets" below — and run the smoke test.
+See **§ Roadmap → Fresh deploy, start to finish** at the top of this file. It is the same
+sequence, in the order you actually do it.
 
 ## Redeploying
 
@@ -365,7 +416,8 @@ eight interleave safely rather than losing each other's tags.
 
 ### What CI does not cover
 
-- **Keycloak realm changes.** `--import-realm` skips an existing realm; see below.
+- **Keycloak realm changes.** `--import-realm` skips an existing realm; see below. The client
+  secret is not affected — it comes from `.env` at import time.
 - **Database migrations** run on service startup (Flyway), so they ship with the image. A
   migration that fails leaves the service unhealthy and `apply.sh` rolls the *image* back — it
   cannot roll a migration back. Keep them additive.
@@ -388,10 +440,25 @@ an image; FCM's service-account JSON and the APNs `.p8` are bind-mounted read-on
 levels were capped it was also printed verbatim into log files by `org.apache.http.headers`, along
 with every bearer and refresh token that passed through. Treat it as public:
 
+Set it in `deploy/.env` **before the first `up -d`** and there is nothing else to do — Keycloak
+resolves it into the realm at import time, and auth reads the same variable.
+
+Rotating it *after* the realm exists is the one case that still needs two steps, because
+`--import-realm` will not run again:
+
+```bash
+$EDITOR deploy/.env          # KEYCLOAK_CLIENT_SECRET=<new value>
+# then set the same value on relay-client in the admin console, or with kcadm:
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env exec keycloak \
+  /opt/keycloak/bin/kcadm.sh update clients/<id> -r relay-realm -s secret='<new value>'
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d auth
 ```
-Keycloak admin console → clients → relay-client → credentials → regenerate
-→ copy into KEYCLOAK_CLIENT_SECRET in deploy/.env → up -d auth
-```
+
+Set it in only one of the two places and auth presents a secret Keycloak never had: 401
+`invalid_client` on every registration and login, surfacing as a 500 with a RESTEasy
+`NotAuthorizedException` thrown from `ClientInvocation.filterRequest` — the admin token, not the
+create-user call. A clean deploy cannot produce this, since both sides read the same variable; a
+rotation against an existing realm can.
 
 The admin console is deliberately not exposed — nginx never proxies it (only `/realms/` and
 `/resources/` reach Keycloak) and returns 404 for `/admin/` explicitly on top of that.
@@ -405,9 +472,24 @@ first boot and does nothing on every boot after that. It is not a deployment mec
 to `keycloak/import/relay-realm.json` will not appear on the server. Either apply the change in
 the admin console and re-export, or drop the realm and re-import deliberately.
 
-The committed realm also has `"sslRequired": "none"`. Set it to `external` once you are behind
-nginx — otherwise Keycloak will happily serve the token endpoint over plain HTTP if anything ever
-reaches it directly.
+The client secret is the exception, and it needs nothing extra. The realm file holds a
+placeholder rather than a literal:
+
+```json
+"secret": "${KEYCLOAK_CLIENT_SECRET}"
+```
+
+Keycloak resolves that from its own environment when it imports the realm, and the compose file
+passes `KEYCLOAK_CLIENT_SECRET` from `deploy/.env` to both Keycloak and auth. One variable, one
+file, no step to remember. (Verified against `quay.io/keycloak/keycloak:26.0`: the value is
+substituted at import, the `client_credentials` grant succeeds with it, and the old committed
+secret is rejected.)
+
+The dev compose file passes the same variable with the committed dev value, so a laptop stack is
+unchanged.
+
+Two dev values in the committed realm are worth fixing by hand, once, in the console:
+`"sslRequired": "none"` should be `external` behind nginx, and `redirectUris`/`webOrigins` are `*`.
 
 ## Backups
 

@@ -21,13 +21,13 @@ services:
   keycloak:
     container_name: keycloak
     image: quay.io/keycloak/keycloak:26.0
-    # --import-realm loads keycloak/import/*.json on startup; existing realms are skipped, not overwritten
     command: start-dev --import-realm
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import:ro
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KEYCLOAK_CLIENT_SECRET: D0t5nQjQJAfrj7uSkChM6MkYpo1Mm2FA
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak_db
       KC_DB_USERNAME: keycloak_user
