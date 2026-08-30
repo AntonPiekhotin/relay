@@ -118,6 +118,17 @@ The other reason is redaction. `auth`'s Apache HttpClient loggers print bearer t
 Keycloak client secret verbatim; the levels are capped in `auth/src/main/resources/application.yaml`,
 and the `drop` rules here are what survive someone re-enabling them to debug Keycloak.
 
+## What is deliberately not in Kibana
+
+- **`eureka`, entirely.** Its stream is registry bookkeeping — renew/cancel/replicate per instance
+  per heartbeat — and at eight services it buries everything else in Discover. Excluded in
+  `elk/filebeat/filebeat.yml` (`exclude_files`, needs a filebeat restart to change) and dropped
+  again in `relay.conf` §4b (hot-reloadable). It is still written to `logs/json/eureka.json` and
+  `logs/eureka.log` on disk, and eureka's own dashboard on :8761 shows who is registered.
+- **`org.apache.kafka.*` at INFO and below**, and `NetworkClient` at WARN — see §1 of `relay.conf`.
+- **`org.apache.http.wire` / `.headers`**, at any level: they print credentials verbatim.
+- **DEBUG from anything**, via `logging.threshold.file: INFO` in each service's `application.yaml`.
+
 ## Wiping the data
 
 ```bash

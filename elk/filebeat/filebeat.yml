@@ -27,7 +27,7 @@ filebeat.inputs:
       check_interval: 2s
       # logback rotates to <service>.json.<date>.<i>.gz. The *.json glob already excludes those;
       # this is belt and braces so a re-roll can never re-ship history.
-      exclude_files: ['\.gz$']
+      exclude_files: ['\.gz$', 'eureka\.json$']
     parsers:
       - ndjson:
           target: ""            # merge the parsed object into the event root
