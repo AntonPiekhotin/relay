@@ -15,5 +15,7 @@ data class WebSocketProperties(
     val outboundBufferSize: Int = 256,
 
     /** Keycloak client id whose roles are read out of the token's `resource_access` claim. */
-    val clientId: String = "relay-client"
+    val clientId: String = "relay-client",
+
+    val allowedOrigins: List<String> = listOf("*")
 )

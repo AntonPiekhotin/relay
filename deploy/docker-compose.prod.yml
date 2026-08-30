@@ -181,6 +181,7 @@ services:
       <<: *service-env
       SERVER_PORT: "8083"
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      RELAY_WEBSOCKET_ALLOWED_ORIGINS: https://${API_HOST}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8083/actuator/health | grep -q '\"status\":\"UP\"'"]
       interval: 15s

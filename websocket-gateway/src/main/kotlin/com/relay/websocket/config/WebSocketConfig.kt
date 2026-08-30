@@ -21,5 +21,6 @@ class WebSocketConfig(
 
     override fun registerWebSocketHandlers(registry: WebSocketHandlerRegistry) {
         registry.addHandler(handler, props.path)
+            .setAllowedOrigins(*props.allowedOrigins.toTypedArray())
     }
 }

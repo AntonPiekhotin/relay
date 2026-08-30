@@ -33,6 +33,7 @@ relay:
     path: /ws
     outbound-buffer-size: 256
     client-id: relay-client
+    allowed-origins: "*"
   message-client:
     base-url: lb://message
     membership-ttl: 5m
