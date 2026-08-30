@@ -541,9 +541,12 @@ want on the day nginx is the thing that is broken:
 ssh -L 5601:localhost:5601 <box>      # then http://localhost:5601
 ```
 
-Retention is 30 days (`elk/es/ilm-relay-prod.json`); dev is 3. Only INFO and above is shipped —
-`logging.threshold.file` — so a *successful* request produces no records at all. That is the usual
-reason Discover looks empty, along with too narrow a time range.
+Retention is 30 days (`elk/es/ilm-relay-prod.json`); dev is 3. Only INFO and above is shipped
+here — not via `logging.threshold.file`, which is `DEBUG` in every service's `application.yaml`,
+but via `LOGGING_LEVEL_COM_RELAY: INFO` in the prod compose file, which stops the per-request
+narrative at the logger before any appender sees it. So a *successful* request still produces no
+records in production, and that is the usual reason Discover looks empty here, along with too
+narrow a time range. Development ships DEBUG; the two environments differ on purpose.
 
 The console stream stays at INFO here too (`LOGGING_THRESHOLD_CONSOLE`), readable with
 `docker compose … logs -f <service>` and capped at 3 × 20 MB per container. The per-request DEBUG

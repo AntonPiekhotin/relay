@@ -43,7 +43,8 @@ logging:
     web: INFO
   threshold:
     console: DEBUG
-    file: INFO
+    file: DEBUG
+
   pattern:
     correlation: "[%X{requestId:-}] "
   file:

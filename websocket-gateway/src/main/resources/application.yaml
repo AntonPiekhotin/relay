@@ -84,7 +84,8 @@ logging:
   # file appender only.
   threshold:
     console: DEBUG   # local tail keeps the detail
-    file: INFO       # only INFO+ reaches Elasticsearch
+    file: DEBUG
+
   pattern:
     correlation: "[%X{requestId:-}] "   # Boot already registers the %correlationId rule
   file:

@@ -7,7 +7,7 @@ Dev only. No TLS, no authentication on `:9200` or `:5601`, 3-day retention.
 ```
 <service> JVM on the host
   └─ console (stdout)  ──> logs/<service>.log        plain text, DEBUG, what start-all.sh greps
-  └─ file appender     ──> logs/json/<service>.json  ECS JSON, INFO+, rotated by logback
+  └─ file appender     ──> logs/json/<service>.json  ECS JSON, DEBUG+, rotated by logback
                                 │
                                 └─ filebeat (container, read-only bind mount)
                                      └─ logstash :5044  redact + drop noise + MDC→ECS
@@ -63,11 +63,13 @@ Three causes, in the order worth checking:
 2. **The time range.** Idle services log almost nothing — steady state across all eight is ~10
    records/minute — so the default "Last 15 minutes" is legitimately empty unless something is
    happening. Widen to Last 24 hours.
-3. **Only INFO and above is shipped** (`logging.threshold.file`). A *successful* request produces no
-   records at all in Kibana: this codebase logs its per-request narrative at DEBUG under
-   `com.relay`, and that stays in `logs/<service>.log`. Kibana holds startup, warnings and errors.
-   To follow one request end to end, take its `trace.id` from Kibana and grep the console log — or
-   set `logging.threshold.file: DEBUG`, which measured at only 4 extra records per run.
+3. **The level.** No longer a cause locally: `logging.threshold.file` is `DEBUG` in all eight
+   services, so the per-request narrative under `com.relay` reaches Kibana and a successful
+   request does produce records. It was `INFO`, and an old jar still running will behave that way.
+   `root: INFO` is unchanged, so nothing but `com.relay` emits DEBUG at all — the whole narrative
+   measured at 4 extra records per run. **Production is deliberately still quiet**:
+   `LOGGING_LEVEL_COM_RELAY: INFO` in `deploy/docker-compose.prod.yml` stops those records at the
+   logger, before any appender threshold sees them.
 
 ## Where the log files must land
 
@@ -127,7 +129,8 @@ and the `drop` rules here are what survive someone re-enabling them to debug Key
   `logs/eureka.log` on disk, and eureka's own dashboard on :8761 shows who is registered.
 - **`org.apache.kafka.*` at INFO and below**, and `NetworkClient` at WARN — see §1 of `relay.conf`.
 - **`org.apache.http.wire` / `.headers`**, at any level: they print credentials verbatim.
-- **DEBUG from anything**, via `logging.threshold.file: INFO` in each service's `application.yaml`.
+- **DEBUG from anything except `com.relay`**, because `root: INFO` means nothing else emits it.
+  The appender threshold itself (`logging.threshold.file`) is `DEBUG` and no longer filters.
 
 ## Wiping the data
 

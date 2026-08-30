@@ -58,7 +58,8 @@ logging:
     org.jboss.resteasy: INFO
   threshold:
     console: DEBUG
-    file: INFO
+    file: DEBUG
+
   pattern:
     correlation: "[%X{requestId:-}] "
   file:
