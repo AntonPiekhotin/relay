@@ -147,6 +147,10 @@ server {
     # KC_HOSTNAME must be https://<this same host>, because Keycloak stamps it into every token's
     # `iss` claim and all eight services validate that claim against their issuer-uri.
     location ^~ /realms/ {
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy no-referrer always;
+
         limit_req zone=authzone burst=20 nodelay;
         set $upstream_kc keycloak:8080;
         proxy_pass http://$upstream_kc$request_uri;
@@ -171,6 +175,10 @@ server {
     location ^~ /admin {
         allow ${RELAY_ADMIN_ALLOW_CIDR};
         deny  all;
+
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy no-referrer always;
 
         set $upstream_kc keycloak:8080;
         proxy_pass http://$upstream_kc$request_uri;
