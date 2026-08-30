@@ -33,8 +33,8 @@ x-service-env: &service-env
   # service name too, but the IP removes any dependency on what the JVM thinks its hostname is.
   EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
   RELAY_LOG_DIR: /var/log/relay
-  LOGGING_LEVEL_COM_RELAY: INFO
-  LOGGING_THRESHOLD_CONSOLE: INFO
+  LOGGING_LEVEL_COM_RELAY: DEBUG
+  LOGGING_THRESHOLD_CONSOLE: DEBUG
   TZ: UTC
 
 # For the five services that listen on 8080 inside their own container. websocket-gateway (8083)
