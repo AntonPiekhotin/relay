@@ -12,6 +12,7 @@ data class CallProperties(
     val maxHistoryPageSize: Int = 100,
     val reconcileInterval: Duration = Duration.ofSeconds(30),
     val reconcileGrace: Duration = Duration.ofSeconds(30),
+    val disconnectGrace: Duration = Duration.ofSeconds(45),
     val turn: Turn = Turn(),
     val livekit: Livekit = Livekit(),
     val group: Group = Group()

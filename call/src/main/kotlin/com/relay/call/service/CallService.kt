@@ -286,6 +286,39 @@ class CallService(
     }
 
     /**
+     * Answered direct calls and who are on them.
+     */
+    @Transactional(readOnly = true)
+    fun answeredDirectCalls(): Map<UUID, List<String>> {
+        val calls = callRepository.findAllByKindAndStatusIn(CallKind.DIRECT, listOf(CallStatus.ANSWERED))
+        if (calls.isEmpty()) return emptyMap()
+        return participantRepository.findAllByCallIdIn(calls.map { it.id })
+            .groupBy({ it.callId }, { it.userId })
+    }
+
+    /**
+     * Ends an answered call whose participant's signaling channel has been gone past the grace period.
+     */
+    @Transactional
+    fun endDisconnectedCall(callId: UUID, goneUserId: String): Boolean {
+        val call = callRepository.findById(callId).orElse(null) ?: return false
+        if (call.kind != CallKind.DIRECT || call.status != CallStatus.ANSWERED) return false
+        val participants = participantRepository.findAllByCallId(callId)
+        if (participants.none { it.userId == goneUserId }) return false
+
+        terminate(call, participants, CallStatus.ENDED, CallSignals.Reasons.DISCONNECTED)
+
+        raise(
+            call,
+            goneUserId,
+            CallSignals.hangup(call, CallSignals.Reasons.DISCONNECTED),
+            others(participants, goneUserId)
+        )
+        logger.info("Call {} ended: {} disconnected without a hangup", callId, goneUserId)
+        return true
+    }
+
+    /**
      * Delivers candidates that were buffered for a call which has since appeared. Closes the narrow
      * window where a candidate is buffered between an invite's commit and its own flush.
      */

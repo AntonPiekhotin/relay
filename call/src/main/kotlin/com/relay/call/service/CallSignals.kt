@@ -81,7 +81,6 @@ object CallSignals {
         /** Group calls only: this user joined on another of their devices — stop ringing. */
         const val JOINED_ELSEWHERE = "joined_elsewhere"
 
-        /** Group calls only: the SFU reported this participant gone rather than the client. */
         const val DISCONNECTED = "disconnected"
     }
 }

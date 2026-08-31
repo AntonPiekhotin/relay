@@ -1,8 +1,12 @@
 package com.relay.call.service
 
+import com.relay.call.config.CallProperties
 import com.relay.call.service.sfu.RoomDirectory
 import com.relay.common.observability.RequestId
 import com.relay.common.observability.RequestIdContext
+import java.time.Duration
+import java.time.Instant
+import java.util.UUID
 import org.slf4j.LoggerFactory
 import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.scheduling.annotation.Scheduled
@@ -14,7 +18,8 @@ import org.springframework.stereotype.Component
  * A client cannot be trusted to report a call it never answered — the app was killed, the phone
  * died, the network went away — so nothing but a server-side timer moves a ringing call to
  * `missed`. This also sweeps ICE candidates whose call never appeared, rings out group invitees,
- * and reconciles live group calls against the SFU's own view of the room.
+ * reconciles live group calls against the SFU's own view of the room, and ends answered direct
+ * calls whose participant no longer holds a socket on the gateway.
  *
  * It orchestrates rather than transacts: each call is expired in its own transaction on
  * [CallService] or [GroupCallService], through the proxy, so one row that loses a race cannot roll
@@ -25,7 +30,10 @@ class CallSweeper(
     private val callService: CallService,
     private val groupCallService: GroupCallService,
     private val roomDirectory: RoomDirectory,
-    private val iceBuffer: IceCandidateBuffer
+    private val sessionDirectory: SessionDirectory,
+    private val disconnectTracker: DisconnectTracker,
+    private val iceBuffer: IceCandidateBuffer,
+    private val properties: CallProperties
 ) {
 
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -66,6 +74,69 @@ class CallSweeper(
             logger.error("SFU reconciliation sweep failed", ex)
         }
     }
+
+    @Scheduled(fixedDelayString = "\${relay.call.reconcile-interval}")
+    fun reconcileDisconnected() = RequestIdContext.with(RequestId.newId()) {
+        try {
+            sweepAnsweredCalls()
+        } catch (ex: Exception) {
+            logger.error("Disconnect reconciliation sweep failed", ex)
+        }
+    }
+
+    private fun sweepAnsweredCalls() {
+        val participantsByCall = callService.answeredDirectCalls()
+        disconnectTracker.retainCalls(participantsByCall.keys)
+        if (participantsByCall.isEmpty()) return
+
+        // Fetched before any per-call transaction opens — a network call never rides one.
+        val onlineUsers = sessionDirectory.onlineAmong(participantsByCall.allParticipants()) ?: return
+
+        val endedCallCount = endCallsWithDisconnectedParticipants(participantsByCall, onlineUsers)
+        if (endedCallCount > 0) {
+            logger.info("Ended {} direct call(s) whose participant disconnected", endedCallCount)
+        }
+    }
+
+    private fun endCallsWithDisconnectedParticipants(
+        participantsByCall: Map<UUID, List<String>>,
+        onlineUsers: Set<String>,
+    ): Int {
+        val now = Instant.now()
+        return participantsByCall.entries.count { (callId, participants) ->
+            participants.any { userId ->
+                settleParticipant(callId, userId, isOnline = userId in onlineUsers, now)
+            }
+        }
+    }
+
+    /** Records one presence observation. True when the observation ended the call. */
+    private fun settleParticipant(callId: UUID, userId: String, isOnline: Boolean, now: Instant): Boolean {
+        if (isOnline) {
+            disconnectTracker.observePresent(callId, userId)
+            return false
+        }
+        return settleAbsentParticipant(callId, userId, now)
+    }
+
+    /** True when the participant has been gone past the grace period and the call was ended for it. */
+    private fun settleAbsentParticipant(callId: UUID, userId: String, now: Instant): Boolean {
+        val goneSince = disconnectTracker.observeGone(callId, userId, now)
+        val stillWithinGrace = Duration.between(goneSince, now) < properties.disconnectGrace
+        if (stillWithinGrace) return false
+        return endCallForDisconnect(callId, userId)
+    }
+
+    private fun endCallForDisconnect(callId: UUID, userId: String): Boolean = try {
+        callService.endDisconnectedCall(callId, userId)
+    } catch (ex: OptimisticLockingFailureException) {
+        // A hangup landed between the read and the write. Correct outcome, not an error.
+        logger.debug("Call {} was settled while being ended for a disconnect", callId, ex)
+        false
+    }
+
+    private fun Map<UUID, List<String>>.allParticipants(): Set<String> =
+        values.flatten().toSet()
 
     private fun expireRungOutCalls() {
         try {

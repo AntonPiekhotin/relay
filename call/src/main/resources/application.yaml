@@ -52,6 +52,7 @@ relay:
     max-history-page-size: 100
     reconcile-interval: 30s
     reconcile-grace: 30s
+    disconnect-grace: 45s
     livekit:
       # `url` is what clients get; `api-url` is what this service calls. Same server, but the two
       # diverge the moment anything is deployed off localhost, so they are two settings from day one.
@@ -70,6 +71,10 @@ relay:
         - turn:localhost:3478?transport=tcp
       static-auth-secret: ${TURN_STATIC_AUTH_SECRET:relay-turn-dev-secret}
       credential-ttl: 12h
+  gateway-client:
+    base-url: lb://websocket-gateway
+    connect-timeout: 2s
+    read-timeout: 3s
 
 eureka:
   instance:
